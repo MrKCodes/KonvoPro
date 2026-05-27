@@ -242,7 +242,16 @@ export async function uploadAttachment(
   // to serialise typed arrays. The filename is irrelevant to the
   // server (it doesn't read multipart filenames) but jsdom's
   // FormData implementation requires one, so we pass a synthetic.
-  const ciphertextBlob = new Blob([enc.ciphertext], {
+  //
+  // We materialise a fresh `ArrayBuffer`-backed copy and feed THAT
+  // to `Blob`. TypeScript 5.7 narrowed `BlobPart` to require an
+  // `ArrayBuffer`-backed view (not `Uint8Array<ArrayBufferLike>`,
+  // and not `ArrayBuffer | SharedArrayBuffer` from `.buffer.slice()`).
+  // The fresh copy has a known concrete type and adds the same one
+  // copy that `Blob` already performs internally for typed arrays.
+  const ciphertextBuffer = new ArrayBuffer(enc.ciphertext.byteLength);
+  new Uint8Array(ciphertextBuffer).set(enc.ciphertext);
+  const ciphertextBlob = new Blob([ciphertextBuffer], {
     type: 'application/octet-stream',
   });
   form.append('ciphertext', ciphertextBlob, 'ciphertext.bin');

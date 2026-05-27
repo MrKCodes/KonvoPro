@@ -411,7 +411,17 @@ export const broadcastRoutes: FastifyPluginAsync<BroadcastRoutesDeps> = async (
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_request' });
       }
-      const body: RoomCreateRequest = parsed.data;
+      // `parsed.data.description` is `string | undefined`; `RoomCreateRequest.description`
+      // is `string?` under `exactOptionalPropertyTypes: true`, so we must
+      // omit the field rather than assign `undefined` to it.
+      const body: RoomCreateRequest =
+        parsed.data.description !== undefined
+          ? {
+              slug: parsed.data.slug,
+              name: parsed.data.name,
+              description: parsed.data.description,
+            }
+          : { slug: parsed.data.slug, name: parsed.data.name };
 
       // Insert atomically: room first, then admin membership for the
       // owner. We do NOT wrap in a transaction here because slug
@@ -468,7 +478,7 @@ export const broadcastRoutes: FastifyPluginAsync<BroadcastRoutesDeps> = async (
         [auth.userId],
       );
       const ownerHandle =
-        owner.rowCount > 0 ? (owner.rows[0] as { handle: string }).handle : '';
+        (owner.rowCount ?? 0) > 0 ? (owner.rows[0] as { handle: string }).handle : '';
 
       const response: RoomResponse = {
         id: inserted.id,
@@ -732,7 +742,7 @@ export const broadcastRoutes: FastifyPluginAsync<BroadcastRoutesDeps> = async (
         [room.id, auth.userId],
       );
       const role =
-        roleR.rowCount > 0 ? (roleR.rows[0] as { role: string }).role : null;
+        (roleR.rowCount ?? 0) > 0 ? (roleR.rows[0] as { role: string }).role : null;
       if (role !== 'admin') {
         return reply.code(403).send({ error: 'forbidden' });
       }

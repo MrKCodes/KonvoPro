@@ -73,6 +73,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { authenticator } from 'otplib';
+import { HashAlgorithms } from '@otplib/core';
 
 import type { Argon2Service } from '../services/auth/argon2.js';
 import {
@@ -304,7 +305,7 @@ function buildTotpVerifier(): (totp: string, secret: string) => boolean {
     digits: 6,
     step: 30,
     window: 1,
-    algorithm: 'sha1' as const,
+    algorithm: HashAlgorithms.SHA1,
   });
   return (totp, secret) => inst.check(totp, secret);
 }

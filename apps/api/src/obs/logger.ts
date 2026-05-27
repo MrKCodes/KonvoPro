@@ -226,7 +226,7 @@ export function createLogger(opts: CreateLoggerOptions = {}): pinoNs.Logger {
     // Strip the default pid + hostname bindings: §19.2 enumerates the
     // exact fields that may appear ("ts, level, msg, requestId,
     // userId?, deviceId?"), and pid/hostname leak server topology.
-    base: undefined,
+    base: null,
     // Map `time` → `ts` (Requirement 18.3). The function MUST return a
     // JSON fragment that pino can splice into the line, including the
     // leading comma. `Date.now()` is intentionally cheap; the histogram
@@ -380,7 +380,7 @@ export function createFastifyLoggerOptions(
 ): pinoNs.LoggerOptions {
   return {
     level: opts.level ?? process.env['LOG_LEVEL'] ?? 'info',
-    base: undefined,
+    base: null,
     timestamp: () => `,"ts":${Date.now()}`,
     messageKey: 'msg',
     serializers: {

@@ -167,11 +167,31 @@ async function importAesKey(
 ): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    raw,
+    toBufferSource(raw),
     { name: 'AES-GCM' },
     /* extractable */ false,
     [usage],
   );
+}
+
+/**
+ * Coerce a `Uint8Array<ArrayBufferLike>` to a `Uint8Array<ArrayBuffer>`
+ * for WebCrypto's `BufferSource` input slot.
+ *
+ * TypeScript 5.7 tightened `lib.dom.d.ts` so `BufferSource` is now
+ * `ArrayBufferView<ArrayBuffer> | ArrayBuffer` (not
+ * `ArrayBufferView<ArrayBufferLike>`). At runtime we only ever
+ * construct over `ArrayBuffer` (never `SharedArrayBuffer`), so the
+ * structural cast is sound — but we still copy when `.buffer` reports
+ * `SharedArrayBuffer` to keep the contract honest at runtime.
+ */
+function toBufferSource(u: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (u.buffer instanceof ArrayBuffer) {
+    return u as Uint8Array<ArrayBuffer>;
+  }
+  const copy = new Uint8Array(u.byteLength);
+  copy.set(u);
+  return copy;
 }
 
 /**
@@ -225,9 +245,9 @@ export async function encryptAttachment(
   // as a Uint8Array view so we can `.slice()` cleanly.
   const combined = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv, tagLength: 128 },
+      { name: 'AES-GCM', iv: toBufferSource(iv), tagLength: 128 },
       cryptoKey,
-      plaintext,
+      toBufferSource(plaintext),
     ),
   );
 
@@ -293,9 +313,9 @@ export async function decryptAttachment(
   const cryptoKey = await importAesKey(key, 'decrypt');
   try {
     const plaintextBuf = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, tagLength: 128 },
+      { name: 'AES-GCM', iv: toBufferSource(iv), tagLength: 128 },
       cryptoKey,
-      combined,
+      toBufferSource(combined),
     );
     // Wrap the ArrayBuffer in a Uint8Array view. WebCrypto only
     // surfaces this on a successful tag check, so there is no

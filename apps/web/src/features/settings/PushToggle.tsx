@@ -420,12 +420,16 @@ function serializeSubscription(sub: PushSubscription): PushSubscriptionShape {
 
 /** Convert a base64url-encoded VAPID key (as the API_Gateway exposes
  *  it) into the `Uint8Array` the PushManager wants. The push spec
- *  requires base64url; we handle both standard and URL-safe variants. */
-function urlBase64ToUint8Array(b64: string): Uint8Array {
+ *  requires base64url; we handle both standard and URL-safe variants.
+ *
+ *  Returns `Uint8Array<ArrayBuffer>` (not `Uint8Array<ArrayBufferLike>`)
+ *  so the result satisfies WebCrypto / PushManager `BufferSource`
+ *  inputs after the TypeScript 5.7 lib.dom narrowing. */
+function urlBase64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
   const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
   const base64 = padded.replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(base64);
-  const out = new Uint8Array(raw.length);
+  const out = new Uint8Array(new ArrayBuffer(raw.length));
   for (let i = 0; i < raw.length; i += 1) {
     out[i] = raw.charCodeAt(i);
   }

@@ -24,6 +24,21 @@
 // structured cloning.
 
 /**
+ * Coerce a `Uint8Array<ArrayBufferLike>` to a `Uint8Array<ArrayBuffer>`
+ * for WebCrypto's `BufferSource` input slot. See `attachment.ts` /
+ * `ratchet.ts` for the rationale (TypeScript 5.7 narrowed `BufferSource`
+ * to require `ArrayBuffer`-backed views).
+ */
+function toBufferSource(u: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (u.buffer instanceof ArrayBuffer) {
+    return u as Uint8Array<ArrayBuffer>;
+  }
+  const copy = new Uint8Array(u.byteLength);
+  copy.set(u);
+  return copy;
+}
+
+/**
  * Wrap a 32-byte private-key seed under an AES-KW key-encryption-key.
  *
  * The returned `Uint8Array` is RFC 3394 ciphertext: input length + 8.
@@ -37,7 +52,7 @@ export async function wrapPrivateKeyBytes(
 ): Promise<Uint8Array> {
   const inner = await crypto.subtle.importKey(
     'raw',
-    new Uint8Array(privateKeyBytes),
+    toBufferSource(privateKeyBytes),
     { name: 'HMAC', hash: 'SHA-256' },
     /* extractable */ true,
     ['sign'],
@@ -60,7 +75,7 @@ export async function unwrapPrivateKeyBytes(
 ): Promise<Uint8Array> {
   const inner = await crypto.subtle.unwrapKey(
     'raw',
-    wrappedPrivateKey,
+    toBufferSource(wrappedPrivateKey),
     kek,
     'AES-KW',
     { name: 'HMAC', hash: 'SHA-256' },
