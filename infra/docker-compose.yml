@@ -35,23 +35,32 @@ volumes:
   caddy_config:
 
 services:
-  # API_Gateway — Fastify (Node 20). The real Dockerfile lands in a later
-  # phase together with the migration runner (task 1.6) and config loader
-  # (task 1.8). Until then this is a placeholder that holds the service
-  # name and network attachments so dependent services can resolve `api`.
-  # TODO(phase-later): replace `image:` + `command:` with `build: ../apps/api`
-  # once apps/api/Dockerfile is authored.
+  # API_Gateway — Fastify (Node 20). Built from apps/api/Dockerfile.
+  # The Dockerfile expects the build context to be the repo root so it
+  # can reach pnpm-workspace.yaml + the workspace package sources;
+  # `context: ..` here makes that explicit.
+  #
+  # Secrets are loaded from `../apps/api/.env` (gitignored). The compose
+  # `environment:` block overrides DATABASE_URL/REDIS_URL/MINIO_* so the
+  # container talks to the intra-network DNS names (postgres / redis /
+  # minio / livekit) regardless of what the .env file says.
   api:
-    image: node:20-alpine
-    command: sh -c "echo 'api placeholder — replaced by built image in later phase'; sleep infinity"
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: konvo/api:local
     networks: [konvo]
+    env_file:
+      - ../apps/api/.env
     environment:
       NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgres://konvo:${POSTGRES_PASSWORD:-konvo}@postgres:5432/konvo
+      PORT: '3000'
+      DATABASE_URL: postgres://konvo:${POSTGRES_PASSWORD:-konvo}@postgres:5432/konvo?sslmode=disable
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-konvo}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-konvo-dev-password}
+      LIVEKIT_URL: ws://livekit:7880
     expose:
       - "3000" # HTTP / WSS
       - "9090" # Prometheus metrics
@@ -67,7 +76,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 24
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
 
   # PostgreSQL 16 — durable store for users, devices, sessions, ciphertext
