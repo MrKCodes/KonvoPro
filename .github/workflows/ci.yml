@@ -138,17 +138,50 @@ jobs:
         # fixtures and shims never trigger the gate, and we exclude
         # `as any` casts because they're a separate (also forbidden)
         # pattern handled by eslint, not by declared-type annotations.
+        #
+        # The grep is comment-aware: a line whose first non-whitespace
+        # characters are `//` or `*` is treated as prose (e.g.
+        # "// design: any user can ...") and skipped. Inline block
+        # comments are stripped via a single `sed` pass before the
+        # match. End-of-line `// ...` trailers are also stripped so a
+        # legitimate type annotation followed by a prose comment that
+        # happens to contain `: any` doesn't false-positive.
         shell: bash
         run: |
           set -euo pipefail
-          if grep -rn -E ':\s*any\b' apps/*/src packages/*/src \
-                --include='*.ts' --include='*.tsx' \
+          # Collect every candidate line, then post-filter out the
+          # comment shapes. The post-filter MUST run after the file
+          # collection (not as part of the grep -v) so it sees the
+          # full grep output including filename:lineno: prefix.
+          hits="$(
+            grep -rn -E ':[[:space:]]*any\b' apps/*/src packages/*/src \
+                  --include='*.ts' --include='*.tsx' \
               | grep -v ' as any' \
-              | grep -q .; then
+              | awk -F: '
+                  {
+                    # $1 = file ; $2 = lineno ; $3.. = content
+                    file=$1; lineno=$2;
+                    # Reassemble the content (it may contain colons).
+                    content=""; for (i=3; i<=NF; i++) content=content (i>3?":":"") $i;
+                    # Strip /* ... */ and trailing // ... so a real
+                    # annotation followed by prose still surfaces but
+                    # a pure comment line is ignored.
+                    sub(/\/\*([^*]|\*+[^*\/])*\*\//, "", content);
+                    sub(/[[:space:]]*\/\/.*$/, "", content);
+                    # Skip lines whose first non-whitespace token is
+                    # // or * — these are pure comment lines.
+                    trimmed=content; gsub(/^[[:space:]]+/, "", trimmed);
+                    if (trimmed ~ /^\/\// || trimmed ~ /^\*/) next;
+                    # Re-test for `: any` on the comment-stripped content.
+                    if (content ~ /:[[:space:]]*any\b/ && content !~ /[[:space:]]as[[:space:]]+any\b/) {
+                      print file ":" lineno ":" content;
+                    }
+                  }
+                '
+          )"
+          if [ -n "$hits" ]; then
             echo '::error::Found `: any` in production source — Requirement 19.11.'
-            grep -rn -E ':\s*any\b' apps/*/src packages/*/src \
-                --include='*.ts' --include='*.tsx' \
-              | grep -v ' as any' || true
+            echo "$hits"
             exit 1
           fi
 

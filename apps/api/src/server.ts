@@ -12,6 +12,8 @@
 
 import Fastify, {
   type FastifyInstance,
+  type FastifyPluginAsync,
+  type FastifyPluginCallback,
   type FastifyRequest,
 } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
@@ -532,10 +534,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // clear runtime error at the multipart route's startup rather than
   // breaking unrelated routes' module resolution.
   await app.register(async (scope) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const multipartModule: any = await import('@fastify/multipart');
-    const multipartPlugin =
-      multipartModule.default ?? multipartModule;
+    // Dynamic import shape: ESM default export OR namespace export.
+    // We declare the union as `unknown` and discriminate at runtime
+    // so we never need an `any` annotation. The plugin signature
+    // matches `FastifyPluginCallback`/`FastifyPluginAsync` so this
+    // is enough surface for `scope.register(...)` to type-check.
+    type MultipartModule = Readonly<{
+      default?: FastifyPluginAsync<Record<string, unknown>> | FastifyPluginCallback<Record<string, unknown>>;
+    }> & (FastifyPluginAsync<Record<string, unknown>> | FastifyPluginCallback<Record<string, unknown>>);
+    const multipartModule = (await import('@fastify/multipart')) as unknown as MultipartModule;
+    const multipartPlugin = multipartModule.default ?? multipartModule;
     await scope.register(multipartPlugin, {
       limits: {
         fileSize: 25 * 1024 * 1024 + 1,
