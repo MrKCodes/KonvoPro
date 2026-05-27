@@ -5,7 +5,7 @@
 // Realizes Requirements 11.7 and 11.8 — "LiveKit is for broadcast,
 // never for 1:1 calls" — by walking the `apps/api/src/` tree at test
 // time and asserting that the only files importing
-// `@livekit/server-sdk` are the broadcast-related ones (token signer
+// `livekit-server-sdk` are the broadcast-related ones (token signer
 // service + broadcast LiveKit routes plugin). Every other route or
 // service that touches 1:1 DM calls (notably `routes/turn.ts`, the
 // coturn TURN credential mint used by `RTCPeerConnection`) MUST NOT
@@ -25,12 +25,9 @@
 // breaking the invariant fails CI just like a unit-test regression.
 //
 // Implementation notes:
-//   - We match the literal `'@livekit/server-sdk'` / `"@livekit/server-sdk"`
+//   - We match the literal `'livekit-server-sdk'` / `"livekit-server-sdk"`
 //     string (single OR double quote). This covers static `import ...
 //     from '...'`, dynamic `import('...')`, and `require('...')` forms.
-//     Comments in services/livekit.ts mention the dash-spelled
-//     `livekit-server-sdk` name (the npm package readme spelling) and
-//     so don't match this regex; they do not need to be allowlisted.
 //   - The walker is hand-rolled with `fs.readdir({ withFileTypes })`
 //     to avoid adding `glob` (or any new dep) to `apps/api/package.json`.
 //   - `apps/web/src/` may not exist with LiveKit usage yet; the walker
@@ -86,9 +83,9 @@ async function walkTsFiles(dir: string): Promise<readonly string[]> {
   return out;
 }
 
-/** Path that matches `'@livekit/server-sdk'` or `"@livekit/server-sdk"`
+/** Path that matches `'livekit-server-sdk'` or `"livekit-server-sdk"`
  *  in any of the import / require / dynamic-import forms. */
-const SERVER_SDK_LITERAL = /['"]@livekit\/server-sdk['"]/;
+const SERVER_SDK_LITERAL = /['"]livekit-server-sdk['"]/;
 
 /** Path that matches any `@livekit/*` package literal — used by the
  *  web-side invariant which should also reject `@livekit/client`,
@@ -121,7 +118,7 @@ describe('LiveKit-only-for-broadcast invariant (Requirements 11.7, 11.8)', () =>
     expect(s.isDirectory()).toBe(true);
   });
 
-  it('apps/api/src: @livekit/server-sdk is only imported from services/livekit.ts and routes/broadcast-live.ts', async () => {
+  it('apps/api/src: livekit-server-sdk is only imported from services/livekit.ts and routes/broadcast-live.ts', async () => {
     const files = await walkTsFiles(API_SRC);
     // The walker MUST find at least the routes / services we know
     // are present, otherwise a misconfigured path would yield a
@@ -140,13 +137,13 @@ describe('LiveKit-only-for-broadcast invariant (Requirements 11.7, 11.8)', () =>
 
     expect(
       violations,
-      `Files outside the broadcast allowlist must not import @livekit/server-sdk. ` +
+      `Files outside the broadcast allowlist must not import livekit-server-sdk. ` +
         `Allowlist: ${[...API_SERVER_SDK_ALLOWLIST].join(', ')}. ` +
         `Violations: ${violations.join(', ')}`,
     ).toEqual([]);
   });
 
-  it('apps/api/src/routes/turn.ts (1:1 DM TURN-credential route) does not import @livekit/server-sdk', async () => {
+  it('apps/api/src/routes/turn.ts (1:1 DM TURN-credential route) does not import livekit-server-sdk', async () => {
     // Explicit assertion called out by Requirement 11.7: the 1:1 call
     // path uses coturn-derived TURN credentials and never the LiveKit
     // SFU. This is implied by the allowlist test above but stated here

@@ -2,12 +2,11 @@
 //
 // The api package declares `prom-client` in its dependencies (used by
 // `apps/api/src/obs/metrics.ts` for the Prometheus exposition endpoint
-// — Requirement 18.1). The current pnpm-lockfile in this checkout is
-// incomplete (a separate registry issue with `@livekit/server-sdk`
-// blocks a full `pnpm install`), so vitest cannot resolve the bare
-// specifier `prom-client` without help. We alias it to this shim from
-// `vitest.config.ts` so test files can import any module that
-// transitively pulls in `metrics.ts` without exploding at module-load.
+// — Requirement 18.1). The shim lets the test suite run without
+// resolving the real package at module-evaluation time (useful in
+// fully offline / partial-install environments and for keeping the
+// test process small). vitest aliases the bare specifier to this
+// file via `apps/api/vitest.config.ts`.
 //
 // The shim implements just enough of `prom-client`'s surface that
 // `metrics.ts` consumes during module evaluation:

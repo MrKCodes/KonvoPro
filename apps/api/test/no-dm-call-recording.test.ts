@@ -136,10 +136,10 @@ function relApi(abs: string): string {
 // Static-analysis regexes
 // ---------------------------------------------------------------------------
 
-/** Matches imports from `'@livekit/server-sdk'` (single OR double
+/** Matches imports from `'livekit-server-sdk'` (single OR double
  *  quote). Used to identify any file that pulls in LiveKit SDK
  *  symbols capable of minting a token or provisioning a room. */
-const LIVEKIT_SDK_IMPORT = /['"]@livekit\/server-sdk['"]/;
+const LIVEKIT_SDK_IMPORT = /['"]livekit-server-sdk['"]/;
 
 /** Matches imports from the local LiveKit signer module. Together with
  *  `LIVEKIT_SDK_IMPORT` this covers every plausible "mints a LiveKit
@@ -207,7 +207,7 @@ describe('task 6.6: LiveKit token mint paths never reference DM call ids', () =>
       const importsSdk = LIVEKIT_SDK_IMPORT.test(content);
       const importsSigner = LIVEKIT_SIGNER_IMPORT.test(content);
       const rel = relApi(file);
-      // The signer module imports `@livekit/server-sdk` directly; it
+      // The signer module imports `livekit-server-sdk` directly; it
       // is the only file allowed to do so. Routes / bootstrap import
       // the local signer module instead.
       if (importsSdk && !LIVEKIT_SDK_ALLOWLIST.has(rel)) {
@@ -220,7 +220,7 @@ describe('task 6.6: LiveKit token mint paths never reference DM call ids', () =>
 
     expect(
       sdkViolations,
-      `Files outside the SDK allowlist must not import @livekit/server-sdk. ` +
+      `Files outside the SDK allowlist must not import livekit-server-sdk. ` +
         `Allowlist: ${[...LIVEKIT_SDK_ALLOWLIST].join(', ')}. ` +
         `Violations: ${sdkViolations.join(', ')}`,
     ).toEqual([]);

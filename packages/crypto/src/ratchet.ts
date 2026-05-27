@@ -460,6 +460,31 @@ function serializeHeader(header: RatchetMessageHeader): Uint8Array {
 // ---------------------------------------------------------------------------
 
 /**
+ * Coerce a `Uint8Array<ArrayBufferLike>` to a `Uint8Array<ArrayBuffer>`
+ * for WebCrypto's `BufferSource` input slot.
+ *
+ * TypeScript 5.7 tightened `lib.dom.d.ts` so `BufferSource` is now
+ * `ArrayBufferView<ArrayBuffer> | ArrayBuffer` (not
+ * `ArrayBufferView<ArrayBufferLike>`). Our public `Uint8Array`
+ * parameters retain the `ArrayBufferLike` element type for backward
+ * compatibility with callers that allocate via Buffer / typed-array
+ * subarray. At runtime we only ever construct over `ArrayBuffer`
+ * (never `SharedArrayBuffer`), so the structural cast is sound — but
+ * we still copy when `.buffer` reports `SharedArrayBuffer` to keep
+ * the contract honest at runtime as well as at the type level.
+ */
+function toBufferSource(u: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (u.buffer instanceof ArrayBuffer) {
+    return u as Uint8Array<ArrayBuffer>;
+  }
+  // Defensive copy for SharedArrayBuffer-backed views — never expected
+  // in practice, but keeps the cast above sound regardless.
+  const copy = new Uint8Array(u.byteLength);
+  copy.set(u);
+  return copy;
+}
+
+/**
  * Import a 32-byte AES key into a non-extractable WebCrypto
  * CryptoKey for one-shot use. The CryptoKey is discarded after the
  * encrypt / decrypt call returns.
@@ -470,7 +495,7 @@ async function importAesKey(
 ): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    raw,
+    toBufferSource(raw),
     { name: 'AES-GCM' },
     /* extractable */ false,
     [usage],
@@ -490,9 +515,14 @@ async function aesGcmEncrypt(
 ): Promise<Uint8Array> {
   const key = await importAesKey(aesKey, 'encrypt');
   const ct = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 },
+    {
+      name: 'AES-GCM',
+      iv: toBufferSource(iv),
+      additionalData: toBufferSource(aad),
+      tagLength: 128,
+    },
     key,
-    plaintext,
+    toBufferSource(plaintext),
   );
   return new Uint8Array(ct);
 }
@@ -516,9 +546,14 @@ async function aesGcmDecrypt(
   const key = await importAesKey(aesKey, 'decrypt');
   try {
     const pt = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 },
+      {
+        name: 'AES-GCM',
+        iv: toBufferSource(iv),
+        additionalData: toBufferSource(aad),
+        tagLength: 128,
+      },
       key,
-      ciphertext,
+      toBufferSource(ciphertext),
     );
     return new Uint8Array(pt);
   } catch {

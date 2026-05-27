@@ -71,16 +71,17 @@ export default defineConfig({
       // shim-incomplete failures; once prom-client is properly
       // installed both classes resolve.
       'prom-client': resolve(here, 'test', '_shims', 'prom-client.ts'),
-      // `@livekit/server-sdk` is referenced by `apps/api/src/services/
+      // `livekit-server-sdk` is referenced by `apps/api/src/services/
       // livekit.ts` for broadcast-room token minting (Requirements
-      // 11.1, 11.2), but the npm registry currently 404s on the
-      // scoped package name (see test/_shims/livekit-server-sdk.ts).
-      // The shim implements `AccessToken` against `jose` so JWT-shape
-      // tests in `broadcast-live-routes.test.ts` and the task-6.6
-      // runtime guard tests in `no-dm-call-recording.test.ts` can
-      // verify the produced tokens without the upstream package.
-      // Production builds resolve the real SDK from npm.
-      '@livekit/server-sdk': resolve(
+      // 11.1, 11.2). Aliasing to the in-tree shim lets the test suite
+      // run in fully offline / partial-install environments without
+      // dragging in the real SDK at module evaluation time. The shim
+      // implements `AccessToken` against `jose` so JWT-shape tests in
+      // `broadcast-live-routes.test.ts` and the task-6.6 runtime
+      // guard tests in `no-dm-call-recording.test.ts` can verify the
+      // produced tokens without the upstream package. Production
+      // builds resolve the real SDK from npm.
+      'livekit-server-sdk': resolve(
         here,
         'test',
         '_shims',

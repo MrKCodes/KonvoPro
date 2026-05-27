@@ -48,7 +48,7 @@
 // `jose.jwtVerify` against the same secret — see
 // `apps/api/test/broadcast-live-routes.test.ts`.
 
-import { AccessToken, type VideoGrant } from '@livekit/server-sdk';
+import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
 
 /** Default TTL for both publisher and viewer JWTs, in seconds.
  *  Requirement 11.1 / 11.2 specify 3600 s. */

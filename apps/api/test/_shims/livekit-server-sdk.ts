@@ -1,14 +1,12 @@
-// Test-only shim for `@livekit/server-sdk`.
+// Test-only shim for `livekit-server-sdk`.
 //
-// The api package declares `@livekit/server-sdk` in its dependencies
+// The api package declares `livekit-server-sdk` in its dependencies
 // (used by `apps/api/src/services/livekit.ts` for LiveKit token
-// minting — Requirements 11.1, 11.2). The current pnpm-lockfile in
-// this checkout is incomplete (the npm registry currently 404s on
-// `@livekit/server-sdk` — the package was renamed to the unscoped
-// `livekit-server-sdk`), so vitest cannot resolve the bare specifier
-// without help. We alias it to this shim from `vitest.config.ts` so
-// test files that transitively import `services/livekit.ts` can
-// load without exploding at module-evaluation time.
+// minting — Requirements 11.1, 11.2). The shim lets the test suite
+// run without resolving the real SDK at module-evaluation time
+// (useful in fully offline / partial-install environments and for
+// keeping the test process small). vitest aliases the bare
+// specifier to this file via `apps/api/vitest.config.ts`.
 //
 // The shim implements just enough of the SDK's surface that
 // `services/livekit.ts` consumes during signing:
@@ -18,10 +16,9 @@
 //   - `toJwt()` to produce an HS256-signed JWT carrying the recorded
 //     identity + grants, decodable by tests via `jose.jwtVerify`
 //
-// Production builds always consume the real `@livekit/server-sdk`
-// from npm (or the post-rename equivalent); this shim is wired only
-// via the alias in `vitest.config.ts` and never reaches a runtime
-// artifact.
+// Production builds always consume the real `livekit-server-sdk`
+// from npm; this shim is wired only via the alias in
+// `vitest.config.ts` and never reaches a runtime artifact.
 
 import { SignJWT } from 'jose';
 
