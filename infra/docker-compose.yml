@@ -1,0 +1,256 @@
+# Konvo Platform — local/self-hosted compose stack
+#
+# Authored in task 1.4 (Phase 0 — Skeleton). Brings up the full set of
+# services required by Requirement 17 (Self-Hosted Deployment):
+#   api, postgres (16), redis (7), minio, coturn, livekit,
+#   prometheus, grafana, loki, caddy.
+#
+# Healthcheck cadence is `interval: 5s` × `retries: 24` = 120s, which
+# matches the readiness budget in requirements 17.1 and 17.7.
+#
+# Configuration files mounted via bind volumes (Caddyfile, init.sql,
+# turnserver.conf, livekit/config.yaml, prometheus.yml) are authored in
+# sibling tasks 1.5–1.7. The compose file is intentionally written first
+# so those tasks can drop their files into the expected paths. The full
+# stack is not booted until task 1.9 (Phase 0 verification).
+#
+# Env loading: docker compose auto-loads `infra/.env` when invoked from
+# this directory. All overridable values use ${VAR:-default} so the
+# stack runs out-of-the-box for local dev without a .env file.
+
+name: konvo
+
+networks:
+  konvo:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  caddy_data:
+  caddy_config:
+
+services:
+  # API_Gateway — Fastify (Node 20). The real Dockerfile lands in a later
+  # phase together with the migration runner (task 1.6) and config loader
+  # (task 1.8). Until then this is a placeholder that holds the service
+  # name and network attachments so dependent services can resolve `api`.
+  # TODO(phase-later): replace `image:` + `command:` with `build: ../apps/api`
+  # once apps/api/Dockerfile is authored.
+  api:
+    image: node:20-alpine
+    command: sh -c "echo 'api placeholder — replaced by built image in later phase'; sleep infinity"
+    networks: [konvo]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://konvo:${POSTGRES_PASSWORD:-konvo}@postgres:5432/konvo
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-konvo}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-konvo-dev-password}
+    expose:
+      - "3000" # HTTP / WSS
+      - "9090" # Prometheus metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # PostgreSQL 16 — durable store for users, devices, sessions, ciphertext
+  # envelopes, broadcast rooms, push subscriptions. Schema bootstrap script
+  # `./postgres/init.sql` is authored in task 1.6.
+  postgres:
+    image: postgres:16-alpine
+    networks: [konvo]
+    environment:
+      POSTGRES_DB: konvo
+      POSTGRES_USER: konvo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konvo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U konvo -d konvo"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # Redis 7 — pub/sub fan-out for envelope routing and rate-limit token
+  # buckets (Requirement 19.4).
+  redis:
+    image: redis:7-alpine
+    networks: [konvo]
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # MinIO — S3-compatible object store for ciphertext attachments
+  # (voice notes, images). Plaintext never reaches this volume.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    networks: [konvo]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-konvo}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-konvo-dev-password}
+    volumes:
+      - minio_data:/data
+    expose:
+      - "9000" # S3 API
+      - "9001" # console
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # coturn — TURN/STUN relay for 1:1 WebRTC calls. Config file
+  # `./coturn/turnserver.conf` is authored in task 1.7.
+  coturn:
+    image: coturn/coturn:latest
+    networks: [konvo]
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49152-49200:49152-49200/udp" # narrow relay range for dev
+    healthcheck:
+      # busybox-compatible — coturn image ships with util-linux pidof.
+      test: ["CMD-SHELL", "pidof turnserver || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # LiveKit — SFU for broadcast rooms (one-to-many speaker → listener
+  # streaming). Config file `./livekit/config.yaml` is authored in task 1.7.
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    networks: [konvo]
+    volumes:
+      - ./livekit/config.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880" # signaling (WSS via Caddy in prod)
+      - "7881:7881" # ICE/TCP fallback
+      - "7882:7882/udp" # ICE/UDP
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7880/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # Prometheus — scrapes `api:9090/metrics` (Requirement 18.1).
+  # Scrape config `./prometheus/prometheus.yml` is authored in task 1.7.
+  prometheus:
+    image: prom/prometheus:latest
+    networks: [konvo]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # Grafana — dashboards DM Health, Calls, Auth, System (Requirement 18.5).
+  # Internal-only: no host port mapping. Reachable inside the network at
+  # `grafana:3000`; reverse-proxied through Caddy in a later phase.
+  # (Note: the api service also listens on 3000 internally — no collision
+  # because each container has its own loopback namespace.)
+  grafana:
+    image: grafana/grafana:latest
+    networks: [konvo]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-konvo-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # Loki — log aggregation backend for redacted pino JSON logs
+  # (Requirement 18.3, 18.4). Internal-only.
+  loki:
+    image: grafana/loki:latest
+    networks: [konvo]
+    volumes:
+      - loki_data:/loki
+    expose:
+      - "3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped
+
+  # Caddy 2 — TLS terminator and reverse proxy (Requirement 17.3, 17.4).
+  # Caddyfile `./caddy/Caddyfile` is authored in task 1.5.
+  caddy:
+    image: caddy:2-alpine
+    networks: [konvo]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    restart: unless-stopped

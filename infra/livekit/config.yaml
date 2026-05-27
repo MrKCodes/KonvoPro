@@ -1,0 +1,55 @@
+# Konvo Platform — LiveKit SFU config
+#
+# Authored in task 1.7 (Phase 0). Satisfies Requirement 17.1 by giving the
+# `livekit` service in infra/docker-compose.yml a config file at the path
+# it already mounts (`./livekit/config.yaml:/etc/livekit.yaml:ro`).
+#
+# Role (per design §3.5 and the LiveKit-only-for-broadcast invariant in §17):
+#   - LiveKit is the SFU for broadcast rooms only (one admin publisher,
+#     up to ~200 viewer subscribers per room).
+#   - LiveKit is NEVER provisioned for 1:1 DM calls. Task 8.4 enforces
+#     this with an api-side guard; CI assertion lives alongside.
+#   - The api mints publisher and viewer JWTs via livekit-server-sdk; this
+#     config supplies the key/secret pair those JWTs are signed with.
+
+# Signaling port (HTTP + WebSocket). Caddy reverse-proxies to wss:// in
+# production. Docker-compose publishes 7880 directly for local dev.
+port: 7880
+
+# WebRTC ICE transport ports. Match the host port mappings already declared
+# in infra/docker-compose.yml (7881/tcp, 7882/udp).
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  # Auto-detect the public IP via STUN at startup. Required when LiveKit
+  # runs behind NAT (i.e. anything but a public-IP VM). Operators can
+  # override with `node_ip:` if STUN discovery is blocked.
+  use_external_ip: true
+
+# API key → secret map. LiveKit signs/verifies room JWTs with these.
+# WARNING: development placeholders. LiveKit does NOT perform env variable
+# interpolation on this YAML, so the secret has to be embedded literally.
+# Production deployments MUST regenerate this file from a template at deploy
+# time (or use livekit-server's `--key-file` flag with a separately mounted
+# secret file) and replace these values with a strong random secret >= 32
+# bytes. The api's `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` env vars
+# (validated in task 1.8) must match the entry below or all token mints
+# will fail.
+keys:
+  devkey: replace-me-livekit-dev-secret-do-not-use-in-prod-32-bytes-min
+
+logging:
+  level: info
+
+# Redis is used by LiveKit for cluster-wide room state and participant
+# tracking. Single-node dev still benefits from this (it lets the api
+# query active room state from a stable place). The compose `redis`
+# service is shared with the api's pub/sub fan-out — that's fine,
+# LiveKit namespaces its keys with `livekit_` prefixes.
+redis:
+  address: redis:6379
+
+room:
+  # Auto-create rooms on first publisher join so the api only has to
+  # mint a token; no separate "create room" round-trip required.
+  auto_create: true

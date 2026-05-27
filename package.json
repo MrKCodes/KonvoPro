@@ -1,0 +1,31 @@
+{
+  "name": "konvo-platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Konvo — self-hostable web-first PWA for E2EE 1:1 messaging and Telegram-style public broadcast rooms.",
+  "type": "module",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "audit": "pnpm audit --prod",
+    "test:e2e": "pnpm -F @konvo/e2e test",
+    "test:e2e:list": "pnpm -F @konvo/e2e test:list"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@typescript-eslint/eslint-plugin": "^8.12.2",
+    "@typescript-eslint/parser": "^8.12.2",
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.12.2"
+  }
+}

@@ -1,0 +1,577 @@
+# .github/workflows/ci.yml
+#
+# Konvo Platform — CI workflow (tasks.md task 10.24).
+#
+# Eight sequential gates run on every push and every PR against `main`,
+# wired via `needs:` so any failure fails the build immediately:
+#
+#   1. typecheck — `tsc --noEmit` across the monorepo + grep guard
+#                  forbidding `: any` annotations in production source
+#                  (Requirements 19.6, 19.11).
+#   2. lint      — `eslint --max-warnings=0` across the monorepo
+#                  (Requirement 19.6).
+#   3. format    — `pnpm -r exec prettier --check .` (Requirement 19.7).
+#   4. audit     — `pnpm audit --prod --audit-level=high` and
+#                  `osv-scanner -r .`; build fails on any `high`
+#                  severity finding (Requirement 19.5).
+#   5. unit      — `pnpm -r run test:unit` (vitest, single-run).
+#   6. property  — `pnpm -r run test:property` (fast-check, default
+#                  ≥ 100 iterations). The nightly job re-runs this
+#                  gate with `FAST_CHECK_RUNS=500` per design.md §16.2.
+#   7. integration
+#                — Brings up `infra/docker-compose.yml` (postgres,
+#                  redis, minio, livekit, coturn, api), waits for
+#                  `/health`, and runs the integration specs
+#                  (`*.integration.spec.ts`) — including
+#                  `e2e/db-redaction.integration.spec.ts` and
+#                  `e2e/offline-queue.integration.spec.ts` — under
+#                  `KONVO_E2E_LIVE=1` (Requirement 18.5).
+#   8. e2e       — Same docker-compose harness, full Playwright
+#                  suite on headless Chromium with `KONVO_E2E_LIVE=1`.
+#                  Requires 100 % pass with zero failed AND zero
+#                  skipped tests; the JSON reporter output is parsed
+#                  by `jq` to enforce the zero-skipped clause
+#                  (Requirement 20.6).
+#
+# Nightly job
+#   `nightly-property` runs at 04:00 UTC every day with
+#   `FAST_CHECK_RUNS=500`, satisfying the ≥ 500 iteration cadence for
+#   tamper / forward-secrecy properties (P3, P4, P5; design.md §16.2).
+#   It also runs on demand via `workflow_dispatch` when the operator
+#   sets the `run_nightly` input to `true`.
+#
+# Manual trigger
+#   The workflow is also dispatchable from the GitHub Actions tab
+#   (`workflow_dispatch`). A plain manual run executes gates 1–8 with
+#   the daytime `FAST_CHECK_RUNS=100`. Setting the `run_nightly` input
+#   to `true` additionally runs the nightly ≥500-iteration property
+#   job alongside the daytime gates — useful before cutting a release
+#   or after touching ratchet / codec / envelope-routing code.
+#
+# Performance
+#   pnpm's content-addressable store is cached via
+#   `actions/setup-node@v4`'s `cache: pnpm` integration. Each job
+#   reinstalls from the lockfile (`--frozen-lockfile`) but resolves
+#   tarballs from the warm store after the first job in the run.
+#
+# Artifacts
+#   Playwright traces, screenshots, videos, and the HTML report are
+#   uploaded on failure via `actions/upload-artifact@v4`.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  schedule:
+    # 04:00 UTC daily — nightly property test job (≥500 iterations).
+    - cron: '0 4 * * *'
+  # Manual trigger from the Actions tab. The optional `run_nightly` input
+  # lets an operator force the ≥500-iteration property job on demand
+  # without waiting for the 04:00 UTC cron — useful before a release or
+  # after touching ratchet / codec / envelope-routing code.
+  workflow_dispatch:
+    inputs:
+      run_nightly:
+        description: 'Also run the nightly property job (FAST_CHECK_RUNS=500).'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs for the same branch / PR so re-pushing
+# doesn't queue redundant pipelines.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+  # Live-stack endpoints for the integration + e2e jobs. The defaults
+  # match the docker-compose service ports and the env-var contract
+  # used by every spec under `e2e/`.
+  KONVO_E2E_LIVE: '1'
+  KONVO_E2E_API_URL: http://localhost:3000
+  KONVO_E2E_WS_URL: ws://localhost:3000/ws
+  KONVO_E2E_WEB_URL: http://localhost:5173
+  KONVO_E2E_DATABASE_URL: postgres://konvo:konvo@localhost:5432/konvo
+  KONVO_E2E_MINIO_ENDPOINT: localhost:9000
+  KONVO_E2E_MINIO_ACCESS_KEY: konvo
+  KONVO_E2E_MINIO_SECRET_KEY: konvo-dev-password
+  KONVO_E2E_MINIO_BUCKET: konvo-attachments
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate 1 — typecheck
+  # ---------------------------------------------------------------------------
+  typecheck:
+    name: 1 · typecheck
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Forbid `any` in production source (Requirement 19.11)
+        # Defence-in-depth grep on top of the eslint rule
+        # `@typescript-eslint/no-explicit-any` (root eslint.config.js).
+        # We restrict to `apps/*/src` and `packages/*/src` so test
+        # fixtures and shims never trigger the gate, and we exclude
+        # `as any` casts because they're a separate (also forbidden)
+        # pattern handled by eslint, not by declared-type annotations.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -rn -E ':\s*any\b' apps/*/src packages/*/src \
+                --include='*.ts' --include='*.tsx' \
+              | grep -v ' as any' \
+              | grep -q .; then
+            echo '::error::Found `: any` in production source — Requirement 19.11.'
+            grep -rn -E ':\s*any\b' apps/*/src packages/*/src \
+                --include='*.ts' --include='*.tsx' \
+              | grep -v ' as any' || true
+            exit 1
+          fi
+
+      - name: tsc --noEmit (Requirement 19.6)
+        run: pnpm -r run typecheck
+
+  # ---------------------------------------------------------------------------
+  # Gate 2 — lint
+  # ---------------------------------------------------------------------------
+  lint:
+    name: 2 · lint
+    needs: typecheck
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: eslint --max-warnings=0 (Requirement 19.6)
+        # `pnpm -r run lint` invokes each workspace's `lint` script
+        # (`eslint .`); positional args after the script name are
+        # forwarded to the underlying invocation, so this becomes
+        # `eslint . --max-warnings=0` per package.
+        run: pnpm -r run lint --max-warnings=0
+
+  # ---------------------------------------------------------------------------
+  # Gate 3 — format
+  # ---------------------------------------------------------------------------
+  format:
+    name: 3 · format
+    needs: lint
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: prettier --check (Requirement 19.7)
+        run: pnpm -r exec prettier --check .
+
+  # ---------------------------------------------------------------------------
+  # Gate 4 — audit
+  # ---------------------------------------------------------------------------
+  audit:
+    name: 4 · audit
+    needs: format
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm audit --prod (Requirement 19.5)
+        # `--audit-level=high` makes pnpm exit non-zero only on
+        # `high` or `critical` advisories; `moderate` and below
+        # surface as warnings and don't fail the build.
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Set up Go (for osv-scanner)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install osv-scanner
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+
+      - name: osv-scanner (Requirement 19.5)
+        # `osv-scanner -r .` walks the workspace, resolves
+        # `pnpm-lock.yaml` + every `package.json`, and queries OSV
+        # for known advisories. It exits non-zero on any
+        # vulnerability match. Requirement 19.5 mandates failing on
+        # `high` severity findings; the scanner's default
+        # "fail-on-any" behaviour is strictly stronger and is what
+        # we want for a hardening gate.
+        run: osv-scanner --recursive .
+
+  # ---------------------------------------------------------------------------
+  # Gate 5 — unit tests
+  # ---------------------------------------------------------------------------
+  unit:
+    name: 5 · unit
+    needs: audit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: vitest run (single-run)
+        run: pnpm -r run test:unit
+
+  # ---------------------------------------------------------------------------
+  # Gate 6 — property tests (default ≥100 iterations)
+  # ---------------------------------------------------------------------------
+  property:
+    name: 6 · property
+    needs: unit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Default iteration count seeded by every workspace's
+      # `test/setup.ts`. The nightly job overrides to 500.
+      FAST_CHECK_RUNS: '100'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: fast-check property suites (≥100 iterations)
+        run: pnpm -r run test:property
+
+  # ---------------------------------------------------------------------------
+  # Gate 7 — integration (docker-compose data-plane + integration specs)
+  # ---------------------------------------------------------------------------
+  integration:
+    name: 7 · integration
+    needs: property
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build api image
+        # The compose file at `infra/docker-compose.yml` currently
+        # uses a placeholder `node:20-alpine` image for the api
+        # service (per its TODO). Once `apps/api/Dockerfile` lands
+        # we'll switch to `docker compose build api` here.
+        run: pnpm -F @konvo/api build
+
+      - name: Bring up docker-compose data-plane
+        working-directory: infra
+        run: |
+          docker compose up -d --wait \
+            postgres redis minio livekit coturn api
+
+      - name: Wait for api /health
+        run: |
+          curl --silent --show-error --fail \
+            --retry 30 --retry-delay 2 --retry-connrefused \
+            http://localhost:3000/health
+
+      - name: Install Playwright browsers
+        run: pnpm -F @konvo/e2e exec playwright install --with-deps chromium
+
+      - name: Integration specs (Requirement 18.5)
+        # Filters the e2e suite to the `.integration.spec.ts` files
+        # — `db-redaction.integration.spec.ts`,
+        # `offline-queue.integration.spec.ts`,
+        # `attachments-no-leak.integration.spec.ts`,
+        # `broadcast-live.integration.spec.ts`. With `KONVO_E2E_LIVE=1`
+        # exported at workflow scope, these specs run against the live
+        # docker-compose stack instead of self-skipping.
+        run: |
+          pnpm -F @konvo/e2e exec playwright test \
+            --grep '\.integration\.spec\.ts$'
+
+      - name: Tear down docker-compose data-plane
+        if: always()
+        working-directory: infra
+        run: docker compose down -v --remove-orphans
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-integration
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Gate 8 — full e2e (Playwright on headless Chromium)
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: 8 · e2e
+    needs: integration
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Force the Playwright JSON reporter to a known path so the
+      # post-run zero-skipped check can parse it.
+      PLAYWRIGHT_JSON_OUTPUT_NAME: e2e/test-results/results.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build api image
+        run: pnpm -F @konvo/api build
+
+      - name: Build web (test mode)
+        # The Playwright suite expects the apps/web dev server in
+        # `MODE=test`, which exposes the `__konvoTestAuth` hook
+        # documented in `e2e/tamper.e2e.spec.ts` (line ~898).
+        run: pnpm -F @konvo/web build -- --mode test
+
+      - name: Bring up docker-compose data-plane
+        working-directory: infra
+        run: |
+          docker compose up -d --wait \
+            postgres redis minio livekit coturn api
+
+      - name: Serve apps/web (test mode)
+        # Playwright targets `http://localhost:5173`. We use
+        # `vite preview` against the test build so the dev server
+        # behaviour matches what `dm-send.spec.ts` and friends
+        # expect.
+        run: |
+          pnpm -F @konvo/web exec vite preview \
+            --host 127.0.0.1 --port 5173 --strictPort \
+            > /tmp/web-preview.log 2>&1 &
+          echo $! > /tmp/web-preview.pid
+          for i in $(seq 1 30); do
+            if curl --silent --fail http://localhost:5173/; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo '::error::apps/web preview failed to come up.'
+          cat /tmp/web-preview.log || true
+          exit 1
+
+      - name: Wait for api /health
+        run: |
+          curl --silent --show-error --fail \
+            --retry 30 --retry-delay 2 --retry-connrefused \
+            http://localhost:3000/health
+
+      - name: Install Playwright browsers
+        run: pnpm -F @konvo/e2e exec playwright install --with-deps chromium
+
+      - name: Full Playwright suite (Requirement 20.6)
+        # `forbidOnly` is enforced at config level
+        # (`e2e/playwright.config.ts`). Zero failed is enforced by
+        # the runner's exit code; zero skipped is enforced by the
+        # follow-up jq parser below.
+        run: |
+          pnpm -F @konvo/e2e exec playwright test \
+            --reporter=list,json
+
+      - name: Enforce zero-skipped (Requirement 20.6)
+        # Requirement 20.6 mandates "zero failed AND zero skipped"
+        # in CI. With `KONVO_E2E_LIVE=1` exported, every spec that
+        # previously self-skipped runs live. Any non-zero count of
+        # `skipped` here means a spec failed to detect the live
+        # stack (or a new spec was authored without wiring its
+        # gate) — fail the build so it's caught at PR time.
+        run: |
+          set -euo pipefail
+          report=e2e/test-results/results.json
+          if [ ! -f "$report" ]; then
+            echo "::error::Playwright JSON report not found at $report"
+            exit 1
+          fi
+          skipped=$(jq '.stats.skipped // 0' "$report")
+          unexpected=$(jq '.stats.unexpected // 0' "$report")
+          expected=$(jq '.stats.expected // 0' "$report")
+          echo "Playwright stats: expected=$expected skipped=$skipped unexpected=$unexpected"
+          if [ "$skipped" != "0" ] || [ "$unexpected" != "0" ] || [ "$expected" = "0" ]; then
+            echo "::error::Requirement 20.6 violated — expected>0, skipped=0, unexpected=0."
+            exit 1
+          fi
+
+      - name: Stop apps/web preview
+        if: always()
+        run: |
+          if [ -f /tmp/web-preview.pid ]; then
+            kill "$(cat /tmp/web-preview.pid)" 2>/dev/null || true
+          fi
+
+      - name: Tear down docker-compose data-plane
+        if: always()
+        working-directory: infra
+        run: docker compose down -v --remove-orphans
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Nightly — property tests with FAST_CHECK_RUNS=500
+  # ---------------------------------------------------------------------------
+  nightly-property:
+    name: nightly · property (≥500 iterations)
+    # Runs automatically on the 04:00 UTC cron, and on demand when an
+    # operator manually triggers the workflow with `run_nightly=true`
+    # (Actions tab → "Run workflow"). Manual runs without that input
+    # only execute gates 1–8 with the daytime FAST_CHECK_RUNS=100.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.run_nightly == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FAST_CHECK_RUNS: '500'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: fast-check property suites (≥500 iterations, tamper / FS)
+        # Mirrors the daytime gate-6 invocation; `FAST_CHECK_RUNS=500`
+        # multiplies the per-property iteration count, exercising the
+        # tamper-rejection (P3), forward-secrecy (P4), and
+        # post-compromise-security (P5) properties at the cadence
+        # required by design.md §16.2.
+        run: pnpm -r run test:property

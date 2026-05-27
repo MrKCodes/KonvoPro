@@ -1,0 +1,136 @@
+# Konvo Platform — Caddy reverse proxy (auto-TLS)
+#
+# Authored in task 1.5 (Phase 0 — Skeleton). Updated in task 8.3
+# (Phase 7 — Broadcast Live A/V, brought forward) to add Content-Security-
+# Policy and supporting hardening headers, plus the `/livekit/*` reverse
+# proxy that lets the web client reach the LiveKit signaling host over the
+# same Caddy-terminated origin. Updated again in task 10.3 to remove the
+# inline CSP — that header is now owned by the api (`@fastify/helmet`)
+# so the per-request style-src nonce can be the SOLE source of truth.
+#
+# Implements:
+#   17.3 — All HTTP and WSS traffic terminates at Caddy with auto-TLS;
+#          HTTP :80 redirects to HTTPS :443 preserving the path.
+#   17.4 — HSTS `max-age=63072000; includeSubDomains; preload` is applied
+#          to every HTTPS response served by Caddy.
+#   17.5 — Only `wss://` is accepted; plain `ws://` is refused. A WebSocket
+#          handshake begins life as a plain HTTP/1.1 GET carrying
+#          `Upgrade: websocket`. The :80 listener below 308-redirects every
+#          such GET to `https://`, so any `ws://konvo.local/ws` attempt is
+#          forced back onto TLS and only ever completes as `wss://`. Bare
+#          `ws://` is therefore never serviced by the API.
+#   19.1 — Strict Content-Security-Policy. After task 10.3 the api owns
+#          this header via `@fastify/helmet`; Caddy keeps the rest of the
+#          hardening headers (X-Frame-Options, X-Content-Type-Options,
+#          Referrer-Policy, Permissions-Policy) as defense in depth.
+#
+# Host selection: `{$KONVO_HOST:konvo.local}`. For local development the
+# default `konvo.local` resolves via /etc/hosts and Caddy issues a
+# self-signed certificate via `tls internal`, which is what the Phase 0
+# verification step (`curl https://konvo.local/health`, design.md §21)
+# expects. For production deployments, set `KONVO_HOST` to a real FQDN
+# and swap `tls internal` for `tls operator@example.com` so Caddy
+# performs ACME issuance against Let's Encrypt (design.md §18.1).
+
+# ---------------------------------------------------------------------------
+# Plain-HTTP listener.
+#
+# Redirects every request — including WebSocket upgrade requests, which
+# begin as plain HTTP/1.1 GETs with `Upgrade: websocket` — to HTTPS. This
+# enforces requirement 17.3 (HTTP→HTTPS redirect on the same path) and
+# implements requirement 17.5 (refuse `ws://`): a `ws://` client receives
+# a 308 Permanent Redirect to `https://...` and must re-handshake over
+# TLS, at which point the upgrade succeeds as `wss://`.
+# ---------------------------------------------------------------------------
+:80 {
+	redir https://{host}{uri} permanent
+}
+
+# ---------------------------------------------------------------------------
+# Primary HTTPS site.
+# ---------------------------------------------------------------------------
+{$KONVO_HOST:konvo.local} {
+	# Auto-TLS. `tls internal` makes Caddy mint a self-signed cert from its
+	# bundled local CA — sufficient for `konvo.local` dev. For a public
+	# hostname, replace with `tls operator@example.com` to enable ACME
+	# issuance against Let's Encrypt (Requirement 17.3).
+	tls internal
+
+	# -----------------------------------------------------------------------
+	# Security response headers (Requirement 19.1, design.md §18.1).
+	#
+	# As of task 10.3, the API_Gateway OWNS the Content-Security-Policy
+	# header — `apps/api/src/server.ts` registers `@fastify/helmet` with
+	# the strict policy (mirroring the previous Caddy floor) plus a
+	# per-request `style-src 'nonce-<value>'` so we can drop the
+	# `'unsafe-inline'` token that was here before. Caddy still emits the
+	# rest of the hardening headers below as a redundant defense in
+	# depth: any deployment topology that bypasses the API (e.g. cached
+	# static assets served by Caddy directly, or a future static SPA
+	# served from `file_server`) still gets HSTS, frame-options, sniff-
+	# protection, referrer policy, and permissions policy. Where helmet
+	# and Caddy emit the same header, they emit identical values, so a
+	# deployer can audit either side and see the same posture.
+	#
+	# CSP itself is not restated here. If we set it both places the
+	# browser would honour the FIRST one only and the latter become
+	# silent dead code; making the api the sole owner keeps the policy
+	# evolution single-sourced (any tightening lands in
+	# `server.ts` alongside the code that emits the nonce).
+	# -----------------------------------------------------------------------
+	header {
+		# Requirement 17.4 — HSTS on every HTTPS response.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+
+		# Defense-in-depth headers paired with the api-side helmet.
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Microphone and camera are required for 1:1 calls and broadcast
+		# Go-Live; both are restricted to same-origin. `display-capture` is
+		# disabled — Konvo never screen-shares.
+		Permissions-Policy "microphone=(self), camera=(self), display-capture=()"
+	}
+
+	# -----------------------------------------------------------------------
+	# LiveKit signaling reverse-proxy (task 8.3).
+	#
+	# LiveKit's client SDK opens a WebSocket to the signaling endpoint and
+	# negotiates ICE with the LiveKit SFU. Routing through Caddy means the
+	# browser only ever connects to `wss://{$KONVO_HOST}/livekit/...`, which
+	# keeps the CSP `connect-src`/`media-src` lists scoped to this single
+	# host. The container `livekit:7880` accepts the WS upgrade on the root
+	# path, so we forward unchanged — `reverse_proxy` propagates the
+	# `Upgrade: websocket` headers automatically.
+	# -----------------------------------------------------------------------
+	handle /livekit/* {
+		reverse_proxy livekit:7880
+	}
+
+	# WebSocket gateway (design.md §10). `reverse_proxy` automatically
+	# forwards `Connection: Upgrade` / `Upgrade: websocket` headers, so a
+	# successful flow becomes `wss://konvo.local/ws*` ↔ `api:3000` end to
+	# end. Combined with the :80 redirect above this satisfies
+	# requirement 17.5 (only `wss://` is serviced).
+	handle /ws* {
+		reverse_proxy api:3000
+	}
+
+	# REST API. `handle_path` strips the matched `/api` prefix before
+	# forwarding, so the backend (which exposes `/health`, `/auth/*`,
+	# `/devices`, `/rooms/*`, etc. at the root per design.md §9) sees the
+	# original route names — e.g. `GET /api/health` → backend `GET /health`.
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+
+	# Phase 0 catch-all. Until the static frontend bundle (`apps/web` build)
+	# is wired up in a later phase, route every other request to the api
+	# service so that `curl https://konvo.local/health` — the Phase 0
+	# verification criterion in design.md §21 — succeeds directly. This
+	# block is intended to be replaced with `file_server` against the built
+	# `apps/web` dist in a later phase.
+	handle {
+		reverse_proxy api:3000
+	}
+}

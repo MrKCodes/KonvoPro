@@ -1,3 +1,151 @@
+# =============================================================================
+# Node.js / TypeScript / pnpm (konvo-platform monorepo)
+# =============================================================================
+
+# Dependencies (resolved via pnpm; reproduced from pnpm-lock.yaml)
+node_modules/
+.pnpm-store/
+.pnp.*
+
+# Build output
+# - apps/web/dist            (Vite production bundle)
+# - apps/api/dist            (TypeScript compiled output)
+# - packages/*/dist          (Workspace package builds)
+**/dist/
+**/build/
+**/.turbo/
+**/.vite/
+**/.next/
+**/.nuxt/
+
+# TypeScript incremental build state
+*.tsbuildinfo
+**/tsconfig.tsbuildinfo
+
+# Vitest / coverage
+coverage/
+**/coverage/
+.nyc_output/
+
+# Playwright (e2e/)
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+e2e/.last-run.json
+playwright-report/
+test-results/
+blob-report/
+
+# Lighthouse / playwright-lighthouse output
+lighthouse-report*.html
+lighthouse-report*.json
+
+# =============================================================================
+# Environment / secrets
+# =============================================================================
+
+# Local environment overrides — committed `.env.example` is the canonical
+# template for `apps/api/.env`; never commit a populated `.env` file.
+.env
+.env.*
+!.env.example
+!.env.example.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Secrets dropped during dev (private keys, kubeconfigs, etc.)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# =============================================================================
+# Infrastructure / runtime
+# =============================================================================
+
+# docker-compose state and overrides
+infra/.data/
+infra/data/
+infra/postgres-data/
+infra/minio-data/
+infra/redis-data/
+docker-compose.override.yml
+
+# Local volumes mounted by infra/docker-compose.yml
+*.pgdata/
+*.miniodata/
+
+# Caddy / coturn / livekit transient state
+infra/caddy/data/
+infra/caddy/config/
+
+# Lock files for tooling that run inside docker
+infra/*/.lockfile
+
+# =============================================================================
+# Logs / debug output
+# =============================================================================
+
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Heap snapshots / profiling
+*.heapsnapshot
+*.cpuprofile
+*.heapprofile
+
+# =============================================================================
+# Editor / OS
+# =============================================================================
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.history/
+
+# =============================================================================
+# Kiro spec / agent workflow artefacts
+# =============================================================================
+
+# The .kiro/ tree holds spec drafts, task graphs, and agent-state JSON
+# generated during local development. None of it is part of the runtime
+# build, and several files contain ephemeral state that should not enter
+# version control.
+.kiro/
+
+# =============================================================================
+# Generated documentation / reports (transient)
+# =============================================================================
+
+# Generated typedoc / api-extractor output (committed reports go under docs/)
+api-extractor.report.md.tmp
+typedoc-out/
+
+# =============================================================================
+# Legacy (Django prototype archived under legacy/) — keep these so the legacy
+# tree's Python build artefacts don't enter version control if anyone happens
+# to run the prototype.
+# =============================================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -8,14 +156,10 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -27,8 +171,6 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
@@ -56,7 +198,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -65,15 +206,8 @@ db.sqlite3-journal
 instance/
 .webassets-cache
 
-# Scrapy stuff:
-.scrapy
-
 # Sphinx documentation
 docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -82,45 +216,7 @@ target/
 profile_default/
 ipython_config.py
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/#use-with-ide
-.pdm.toml
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
+# Environments (Python)
 .venv
 env/
 venv/
@@ -128,33 +224,11 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
+# mypy / type checkers
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+.pdm.toml
+__pypackages__/

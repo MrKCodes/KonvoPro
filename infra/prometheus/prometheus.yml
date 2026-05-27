@@ -1,0 +1,42 @@
+# Konvo Platform — Prometheus scrape config
+#
+# Authored in task 1.7 (Phase 0). Satisfies Requirements 17.1 and 18.1 by
+# giving the `prometheus` service in infra/docker-compose.yml a config
+# file at the path it already mounts
+# (`./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro`).
+#
+# What gets scraped:
+#   - `konvo-api` job → api:9090/metrics (the metrics named in
+#     Requirement 18.2 and design §19.1: konvo_ws_connections,
+#     konvo_envelopes_routed_total, konvo_envelope_store_seconds, etc.)
+#   - `prometheus` self-scrape so the Grafana System dashboard
+#     (Requirement 18.5) can show Prometheus's own health.
+#
+# 15s is the standard balance between alerting latency and TSDB volume.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: konvo-self-hosted
+
+scrape_configs:
+  # API_Gateway metrics. The api container exposes :9090 on the konvo
+  # network (see compose `expose: ["9090"]`). Path `/metrics` per
+  # Requirement 18.1.
+  - job_name: konvo-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:9090
+        labels:
+          service: api
+
+  # Prometheus self-scrape — useful for the System dashboard and to
+  # detect scrape-loop misconfiguration.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+        labels:
+          service: prometheus
