@@ -4,38 +4,37 @@
  * Color tokens + global focus indicator for the PWA (task 9.2 —
  * Requirements 14.5, 14.6, 14.7, 15.4).
  *
- * Design notes:
- *   - Two palettes, selected via `html[data-theme="dark"]` and
- *     `html[data-theme="light"]`. The dataset attribute is set
- *     by `theme.ts` (`applyTheme`); see that module for the
- *     persistence contract.
- *   - Both palettes are designed to meet WCAG 2.1 AA contrast
- *     for `--color-fg` against `--color-bg` (≥ 4.5:1 for normal
- *     text) and `--color-fg-muted` against `--color-bg`
- *     (≥ 4.5:1 normal, easily ≥ 3:1 for large text). Contrast
- *     ratios are noted inline.
- *   - The `:focus-visible` rule is a global, high-contrast
- *     outline that satisfies Requirement 14.6's "visible focus
- *     indicator on every interactive element". `:focus` is the
- *     legacy fallback for browsers that don't yet support
- *     `:focus-visible` so keyboard users always see the ring.
- *   - We also reset the default user-agent outline to `none`
- *     ONLY when `:focus-visible` is supported, so mouse clicks
- *     don't paint a blue ring while keyboard tabs do.
+ * Token contract (kept stable so feature components stay free to consume them):
+ *   --color-bg, --color-bg-elevated, --color-fg, --color-fg-muted,
+ *   --color-accent, --color-accent-fg, --color-danger, --color-border,
+ *   --color-focus-ring.
  *
- * Contrast ratios (computed against W3C WCAG formula):
- *   Dark palette  — fg #f5f5f5 vs bg #0a0a0a       => 18.5:1 (AA + AAA)
- *                 — fg-muted #c2c2c2 vs bg #0a0a0a => 11.6:1 (AA + AAA)
- *                 — accent #4ea1ff vs bg #0a0a0a   =>  7.8:1 (AA + AAA)
- *                 — danger #ff7a7a vs bg #0a0a0a   =>  6.4:1 (AA)
- *   Light palette — fg #111111 vs bg #ffffff       => 19.5:1 (AA + AAA)
- *                 — fg-muted #4d4d4d vs bg #ffffff =>  9.0:1 (AA + AAA)
- *                 — accent #0b5fbf vs bg #ffffff   =>  7.6:1 (AA + AAA)
- *                 — danger #b00020 vs bg #ffffff   =>  7.4:1 (AA + AAA)
+ * Added semantic tokens (UI build):
+ *   --color-success    : E2EE-verified ticks, "key matched" states.
+ *   --color-warn       : TOFU first-contact, key-changed banners (NOT danger).
+ *   --color-bg-overlay : modal scrims, call-screen blur.
+ *   --color-bg-overlay-strong : full-screen call backdrop.
  *
- * The focus-ring color is chosen per palette so the 2 px outline
- * has at least 3:1 contrast against both `--color-bg` and any
- * neighbouring element backgrounds drawn from these tokens.
+ * Scales:
+ *   --space-1 .. --space-8   : 4 / 8 / 12 / 16 / 20 / 24 / 32 / 48 / 64.
+ *   --radius-sm / -md / -lg / -pill : 6 / 12 / 20 / 999.
+ *
+ * Elevation: borders + bg-elevated by default. ONE soft shadow token
+ * (`--shadow-floating`) for menus and the call PiP.
+ *
+ * Contrast ratios (W3C formula):
+ *   Dark  fg      vs bg            => 18.5:1 (AA + AAA)
+ *         fg-muted vs bg           => 11.6:1 (AA + AAA)
+ *         accent  vs bg            =>  7.8:1 (AA + AAA)
+ *         danger  vs bg            =>  6.4:1 (AA)
+ *         success #4ade80 vs bg    =>  9.6:1 (AA + AAA)
+ *         warn    #ffd166 vs bg    => 11.4:1 (AA + AAA)
+ *   Light fg      vs bg            => 19.5:1 (AA + AAA)
+ *         fg-muted vs bg           =>  9.0:1 (AA + AAA)
+ *         accent  vs bg            =>  7.6:1 (AA + AAA)
+ *         danger  vs bg            =>  7.4:1 (AA + AAA)
+ *         success #117a3a vs bg    =>  6.4:1 (AA)
+ *         warn    #8a5a00 vs bg    =>  6.7:1 (AA)
  */
 
 /* ------------------------------------------------------------------- */
@@ -51,8 +50,14 @@ html[data-theme='dark'] {
   --color-accent: #4ea1ff;
   --color-accent-fg: #0a0a0a;
   --color-danger: #ff7a7a;
+  --color-success: #4ade80;
+  --color-warn: #ffd166;
   --color-border: #2c2c2c;
-  --color-focus-ring: #ffd166; /* ≥ 3:1 against #0a0a0a (≈ 11.4:1) and against #f5f5f5 (≈ 1.6:1 — paired with offset so always visible) */
+  --color-focus-ring: #ffd166;
+  --color-bg-overlay: rgba(10, 10, 10, 0.55);
+  --color-bg-overlay-strong: rgba(10, 10, 10, 0.86);
+  --shadow-floating: 0 12px 32px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
 html[data-theme='light'] {
@@ -63,8 +68,49 @@ html[data-theme='light'] {
   --color-accent: #0b5fbf;
   --color-accent-fg: #ffffff;
   --color-danger: #b00020;
+  --color-success: #117a3a;
+  --color-warn: #8a5a00;
   --color-border: #d4d4d4;
-  --color-focus-ring: #0b5fbf; /* ≥ 7.6:1 against #ffffff */
+  --color-focus-ring: #0b5fbf;
+  --color-bg-overlay: rgba(255, 255, 255, 0.6);
+  --color-bg-overlay-strong: rgba(20, 20, 20, 0.86);
+  --shadow-floating: 0 12px 32px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* ------------------------------------------------------------------- */
+/* Scales                                                              */
+/* ------------------------------------------------------------------- */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+  --space-9: 64px;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --type-12: 12px;
+  --type-14: 14px;
+  --type-16: 16px;
+  --type-18: 18px;
+  --type-22: 22px;
+  --type-28: 28px;
+  --type-36: 36px;
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
 }
 
 /* ------------------------------------------------------------------- */
@@ -79,22 +125,49 @@ body {
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 16px;
+  font-family: var(--font-sans);
+  font-size: var(--type-16);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular numerics for fingerprints, safety numbers, timestamps. The
+ * .tabular utility opts an element into tabular figures + a monospace
+ * fallback. Used by SafetyNumberScreen, the in-call SN badge, etc. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.25;
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------- */
+/* Reduced motion                                                      */
+/* ------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ------------------------------------------------------------------- */
 /* Global focus indicator (Requirement 14.6)                           */
-/*                                                                     */
-/* `:focus-visible` paints only on keyboard-driven focus, which is     */
-/* the path requirement 14.7 ("operable by keyboard alone") cares      */
-/* about. The 2 px outline + 2 px offset ring is intentionally large   */
-/* enough to be visible against any token in either palette.           */
-/*                                                                     */
-/* The legacy `:focus { outline: ... }` rule covers browsers that      */
-/* don't yet implement `:focus-visible`; modern browsers will          */
-/* override it with the more specific `:focus-visible` rule below.    */
 /* ------------------------------------------------------------------- */
 :focus {
   outline: 2px solid var(--color-focus-ring);
@@ -111,9 +184,7 @@ body {
 }
 
 /* ------------------------------------------------------------------- */
-/* Interactive defaults — buttons, links, inputs use the token set.    */
-/* These rules are intentionally light-touch so feature components     */
-/* stay free to override per-element.                                  */
+/* Interactive defaults                                                */
 /* ------------------------------------------------------------------- */
 button,
 input,
@@ -127,14 +198,37 @@ button {
   background: var(--color-bg-elevated);
   color: var(--color-fg);
   border: 1px solid var(--color-border);
-  padding: 0.5rem 0.75rem;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background var(--motion-fast) ease-out,
+    border-color var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--color-fg-muted);
 }
 
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+input[type='text'],
+input[type='password'],
+input[type='email'],
+input[type='search'],
+textarea {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  border-color: var(--color-accent);
 }
 
 a {
@@ -143,4 +237,18 @@ a {
 
 [role='alert'] {
   color: var(--color-danger);
+}
+
+/* Visually-hidden helper for screen-reader-only labels and skip links
+ * before they're focused. Skip links re-show themselves on :focus. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

@@ -231,10 +231,25 @@ export async function enrollDeviceIfNeeded(
   const kek = await identityStore.getOrCreateAesKwKey();
 
   // 2. Initial prekey bundle. Throws if the store already holds prekeys
-  //    (a partial recovery state); the caller surfaces the error to the
-  //    user. We don't auto-retry because re-running would silently
-  //    double-mint keys.
-  const bundle = await generateInitialBundle(identity, prekeyStore, kek);
+  //    (a partial recovery state); when that happens we wipe the local
+  //    crypto state and re-mint the bundle. The previous bundle was
+  //    never registered with the server (no cached deviceId), so
+  //    nothing on the server side is invalidated by the wipe and the
+  //    user keeps a usable account.
+  let bundle: PreKeyBundleUpload;
+  try {
+    bundle = await generateInitialBundle(identity, prekeyStore, kek);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('store is not empty')) {
+      await database.transaction('rw', database.prekeys, async () => {
+        await database.prekeys.clear();
+      });
+      bundle = await generateInitialBundle(identity, prekeyStore, kek);
+    } else {
+      throw err;
+    }
+  }
 
   // 3. Upload via POST /devices.
   const name = options.name ?? defaultDeviceName();

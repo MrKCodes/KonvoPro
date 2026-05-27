@@ -102,13 +102,33 @@ interface RenderedPost {
 }
 
 export function RoomView(props: RoomViewProps): JSX.Element {
-  const api = props.api ?? broadcastApi;
-  const roomsStore = props.roomsStore ?? new DexieRoomsStore(db);
-  const roomPostsStore = props.roomPostsStore ?? new DexieRoomPostsStore(db);
+  // CRITICAL: stabilise the default-store / default-api references
+  // across renders. Allocating fresh instances inline (`?? new
+  // DexieRoomsStore(db)`) mutated the dependency identities of the
+  // fetch effect on every render, which triggered an infinite
+  // refetch loop on any 404 (every error → setError → re-render →
+  // new instances → effect re-runs → 404 → setError …). Memoising
+  // the defaults — and including the *prop overrides* in the deps,
+  // not the resolved instances — keeps the effect stable for the
+  // common no-overrides path while still letting tests inject a
+  // stub by passing a stable reference.
+  const api = useMemo(
+    () => props.api ?? broadcastApi,
+    [props.api],
+  );
+  const roomsStore = useMemo(
+    () => props.roomsStore ?? new DexieRoomsStore(db),
+    [props.roomsStore],
+  );
+  const roomPostsStore = useMemo(
+    () => props.roomPostsStore ?? new DexieRoomPostsStore(db),
+    [props.roomPostsStore],
+  );
   const { slug } = props;
 
   const [room, setRoom] = useState<RoomDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [posts, setPosts] = useState<RenderedPost[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -119,6 +139,7 @@ export function RoomView(props: RoomViewProps): JSX.Element {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setErrorStatus(null);
 
     void (async () => {
       try {
@@ -185,10 +206,13 @@ export function RoomView(props: RoomViewProps): JSX.Element {
         setPosts(rendered);
       } catch (err) {
         if (cancelled) return;
+        const status =
+          err instanceof BroadcastApiError ? err.status ?? null : null;
         const msg =
           err instanceof BroadcastApiError
             ? err.serverError ?? `HTTP ${err.status ?? '?'}`
             : (err as Error).message;
+        setErrorStatus(status);
         setError(msg);
       } finally {
         if (!cancelled) setLoading(false);
@@ -264,6 +288,20 @@ export function RoomView(props: RoomViewProps): JSX.Element {
     );
   }
   if (error !== null) {
+    if (errorStatus === 404) {
+      return (
+        <section data-testid="room-view" data-room-status="not-found">
+          <div className="empty">
+            <h3>Room not found</h3>
+            <p>
+              No broadcast room with the slug <code>{slug}</code>{' '}
+              exists on this server. Double-check the link, or pick
+              one from the rooms list.
+            </p>
+          </div>
+        </section>
+      );
+    }
     return (
       <section data-testid="room-view" role="alert">
         <p>Couldn’t load room: {error}</p>

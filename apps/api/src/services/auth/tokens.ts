@@ -146,7 +146,17 @@ export function createAccessTokenService(
       if (typeof sub !== 'string' || sub.length === 0) {
         throw new Error('access token missing required claim: sub');
       }
-      if (typeof did !== 'string' || did.length === 0) {
+      // Empty-string `did` is the documented Phase-1 sentinel for
+      // "logged in, not yet enrolled" — see routes/auth.ts header.
+      // The token is presented to `POST /devices` (which itself
+      // doesn't need a real device id) and then exchanged via
+      // `/auth/refresh?deviceId=...` for a token with a populated
+      // `did`. Routes that REQUIRE a real device id (WS auth,
+      // anything that ties an action to a physical browser) MUST
+      // reject `did === ''` themselves; making `verify` reject it
+      // here would prevent the very enrollment call that supplies
+      // the missing id.
+      if (typeof did !== 'string') {
         throw new Error('access token missing required claim: did');
       }
       if (typeof iat !== 'number') {

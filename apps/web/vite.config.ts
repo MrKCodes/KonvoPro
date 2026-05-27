@@ -51,6 +51,31 @@ export default defineConfig({
   server: {
     port: 5173,
     host: '0.0.0.0',
+    // Dev-only reverse proxy that maps every API surface the SPA
+    // talks to onto the Fastify gateway running on :3000. In
+    // production, Caddy fronts both the SPA and the API on the
+    // same origin, so the AuthApiClient (and every other client)
+    // uses relative `/auth/*`, `/rooms/*`, ..., paths. We keep the
+    // same shape in dev by forwarding those exact paths from the
+    // Vite dev server to the gateway. WS upgrades on `/ws` are
+    // proxied with `ws: true` so the WSS gateway also works
+    // through the same origin.
+    proxy: {
+      '/auth': { target: 'http://localhost:3000', changeOrigin: true },
+      '/devices': { target: 'http://localhost:3000', changeOrigin: true },
+      '/users': { target: 'http://localhost:3000', changeOrigin: true },
+      '/rooms': { target: 'http://localhost:3000', changeOrigin: true },
+      '/attachments': { target: 'http://localhost:3000', changeOrigin: true },
+      '/push': { target: 'http://localhost:3000', changeOrigin: true },
+      '/turn': { target: 'http://localhost:3000', changeOrigin: true },
+      '/health': { target: 'http://localhost:3000', changeOrigin: true },
+      '/metrics': { target: 'http://localhost:3000', changeOrigin: true },
+      '/ws': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   build: {
     outDir: 'dist',
