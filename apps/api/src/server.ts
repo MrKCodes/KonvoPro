@@ -29,6 +29,7 @@ import { devicesRoutes } from './routes/devices.js';
 import { prekeyRoutes } from './routes/prekeys.js';
 import { pushRoutes } from './routes/push.js';
 import { turnRoutes } from './routes/turn.js';
+import { usersRoutes } from './routes/users.js';
 import { broadcastLiveRoutes } from './routes/broadcast-live.js';
 import { broadcastRoutes } from './routes/broadcast.js';
 import {
@@ -462,6 +463,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // apply here too.
   await app.register(prekeyRoutes, {
     pool: deps.pool,
+  });
+
+  // Directory lookup for DM bootstrap. Auth-gated to avoid drive-by
+  // handle harvesting; collapses every parse / not-found path to
+  // HTTP 404 with `{ error: 'not_found' }`.
+  await app.register(usersRoutes, {
+    pool: deps.pool,
+    requireAuth: makeRequireAuth(deps.accessTokenService),
   });
 
   // Phase-8 task 9.3 — Web Push subscription routes (Requirements

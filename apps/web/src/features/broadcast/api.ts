@@ -200,6 +200,19 @@ export class BroadcastApiClient {
     });
   }
 
+  /** GET /rooms — public listing of recently-created rooms (top 50,
+   *  most-recent first). The endpoint was added so the SPA's "browse
+   *  rooms" pane has something to render; before it, RoomList was
+   *  fed exclusively by the local Dexie cache and a fresh user saw
+   *  an empty list with no way to discover existing rooms. */
+  async listRooms(): Promise<{ rooms: readonly RoomDto[] }> {
+    return this.#request<{ rooms: readonly RoomDto[] }>({
+      method: 'GET',
+      path: '/rooms',
+      includeAccessToken: false,
+    });
+  }
+
   /** GET /rooms/:slug/messages — public read; no auth required.
    *  `before` is an ISO-8601 string from a previous response's
    *  `nextBefore`; `limit` defaults to 50 server-side. */

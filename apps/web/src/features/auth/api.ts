@@ -93,6 +93,22 @@ export interface AuthApiClientOptions {
   readonly readCookieHeader?: () => string;
 }
 
+/** Shape returned by `GET /users/:handle`. Mirrors the api's
+ *  `UserDirectoryResponse` (apps/api/src/routes/users.ts). The
+ *  `devices` array is empty when the peer has no enrolled devices —
+ *  reachable handle, but the user is not currently online or hasn't
+ *  enrolled any browser yet. */
+export interface UserDirectoryDevice {
+  readonly deviceId: string;
+  readonly name: string;
+  readonly lastSeenTime: string | null;
+}
+export interface UserDirectoryResponse {
+  readonly userId: string;
+  readonly handle: string;
+  readonly devices: readonly UserDirectoryDevice[];
+}
+
 // ---------------------------------------------------------------------------
 // Cookie helpers
 // ---------------------------------------------------------------------------
@@ -260,6 +276,38 @@ export class AuthApiClient {
     await this.#request<void>({
       method: 'DELETE',
       path: `/devices/${encodeURIComponent(deviceId)}`,
+    });
+  }
+
+  /** GET /users/:handle — directory lookup used by the DM composer to
+   *  resolve a typed handle into a `userId` (and the peer's enrolled
+   *  device list, used as the X3DH bootstrap fan-out target). The
+   *  server collapses every parse-failure / not-found case to HTTP
+   *  404, so callers see a uniform `status === 404` for "no such
+   *  handle" regardless of which check rejected it. */
+  async lookupUser(handle: string): Promise<UserDirectoryResponse> {
+    return this.#request<UserDirectoryResponse>({
+      method: 'GET',
+      path: `/users/${encodeURIComponent(handle)}`,
+    });
+  }
+
+  /** GET /devices/:id/owner — reverse-lookup used by the inbound
+   *  DM dispatch to map a `senderDeviceId` back to its owning user.
+   *  Same anti-harvest posture as `/users/:handle`: parse / not-found
+   *  collapses to 404. */
+  async lookupDeviceOwner(deviceId: string): Promise<{
+    deviceId: string;
+    userId: string;
+    handle: string;
+  }> {
+    return this.#request<{
+      deviceId: string;
+      userId: string;
+      handle: string;
+    }>({
+      method: 'GET',
+      path: `/devices/${encodeURIComponent(deviceId)}/owner`,
     });
   }
 

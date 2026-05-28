@@ -18,6 +18,7 @@ import { Rail } from './Rail.js';
 import { LogoutIcon } from './Icons.js';
 import { navigate, useRoute, type Route } from './router.js';
 import { authActions } from '../features/auth/store.js';
+import { DmHost } from '../features/dm/DmHost.js';
 import { AuthScreen } from './screens/AuthScreen.js';
 import { BroadcastScreen } from './screens/BroadcastScreen.js';
 import { CallsScreen } from './screens/CallsScreen.js';
@@ -92,42 +93,44 @@ export function Shell(): JSX.Element {
   const pane = isDetailFocused(route) ? 'detail' : 'list';
 
   return (
-    <div className="shell" data-pane={pane}>
-      <a className="skip-link" href="#detail">
-        Skip to content
-      </a>
+    <DmHost>
+      <div className="shell" data-pane={pane}>
+        <a className="skip-link" href="#detail">
+          Skip to content
+        </a>
 
-      <div className="shell__offline">
-        <OfflineBanner />
+        <div className="shell__offline">
+          <OfflineBanner />
+        </div>
+
+        <Rail
+          route={route}
+          bottom={
+            <>
+              <ThemeToggle />
+              <button
+                type="button"
+                className="rail__btn"
+                aria-label={`Sign out${userHandle === null ? '' : ` ${userHandle}`}`}
+                title={userHandle === null ? 'Sign out' : `Sign out · ${userHandle}`}
+                onClick={() => {
+                  authActions.clearAuth();
+                  navigate('/login');
+                }}
+              >
+                <LogoutIcon label="Sign out" />
+              </button>
+            </>
+          }
+        />
+
+        <div className="shell__list">{screen.list}</div>
+        <main id="detail" className="shell__detail" aria-label="Content">
+          {screen.detail}
+        </main>
+
+        <InstallPrompt />
       </div>
-
-      <Rail
-        route={route}
-        bottom={
-          <>
-            <ThemeToggle />
-            <button
-              type="button"
-              className="rail__btn"
-              aria-label={`Sign out${userHandle === null ? '' : ` ${userHandle}`}`}
-              title={userHandle === null ? 'Sign out' : `Sign out · ${userHandle}`}
-              onClick={() => {
-                authActions.clearAuth();
-                navigate('/login');
-              }}
-            >
-              <LogoutIcon label="Sign out" />
-            </button>
-          </>
-        }
-      />
-
-      <div className="shell__list">{screen.list}</div>
-      <main id="detail" className="shell__detail" aria-label="Content">
-        {screen.detail}
-      </main>
-
-      <InstallPrompt />
-    </div>
+    </DmHost>
   );
 }

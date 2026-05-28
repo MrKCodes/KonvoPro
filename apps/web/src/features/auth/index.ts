@@ -28,6 +28,8 @@ export {
 export type {
   AuthApiClientOptions,
   AuthApiErrorKind,
+  UserDirectoryDevice,
+  UserDirectoryResponse,
 } from './api.js';
 
 export {

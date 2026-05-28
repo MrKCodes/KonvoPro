@@ -493,6 +493,43 @@ export const broadcastRoutes: FastifyPluginAsync<BroadcastRoutesDeps> = async (
   );
 
   // -------------------------------------------------------------------------
+  // GET /rooms — public listing of recently-created rooms.
+  //
+  // Not part of the original design.md §9 surface but added so the
+  // SPA's "browse rooms" pane has something to render. Returns up to
+  // 50 rooms ordered by createdAt DESC. Public read; no auth required
+  // (matches the rest of the read surface for broadcast rooms).
+  // -------------------------------------------------------------------------
+  app.get('/rooms', async (_req, reply) => {
+    interface ListRow {
+      id: string;
+      slug: string;
+      name: string;
+      description: string | null;
+      owner_user: string;
+      owner_handle: string;
+      created_at: Date;
+    }
+    const r = await deps.pool.query<ListRow>(
+      `SELECT r.id, r.slug, r.name, r.description, r.owner_user,
+              u.handle AS owner_handle, r.created_at
+         FROM broadcast_rooms r
+         JOIN users u ON u.id = r.owner_user
+        ORDER BY r.created_at DESC
+        LIMIT 50`,
+    );
+    const rooms: RoomResponse[] = r.rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      ownerHandle: row.owner_handle,
+      createdAt: isoUtc(row.created_at),
+    }));
+    return reply.code(200).send({ rooms });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /rooms/:slug — public read — Requirements 10.2, 10.13
   // -------------------------------------------------------------------------
   app.get('/rooms/:slug', async (req, reply) => {

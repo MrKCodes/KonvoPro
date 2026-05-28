@@ -21,28 +21,69 @@ Prerequisites: **Node.js ≥ 20.10**, **pnpm ≥ 9**, and **Docker** with the
 Compose plugin. Ports 80, 443, 3000, 5173, 3478/udp, and 7880–7882 should be
 free on the host.
 
+There are two supported ways to run the stack locally. Pick one:
+
+### Option A — Everything in Docker (recommended for "I just want to use it")
+
 ```bash
-# 1. Clone
 git clone https://github.com/<your-org>/KonvoPro.git
 cd KonvoPro
-
-# 2. Install all workspaces (apps/web, apps/api, packages/*, e2e)
 pnpm install
 
-# 3. Configure API secrets for local dev
+# 1. Configure API secrets — defaults pass the boot validator and work
+#    against the docker-compose data plane.
 cp apps/api/.env.example apps/api/.env
-# (the defaults work for docker-compose; rotate before any non-local use)
 
-# 4. Bring up the data plane
-#    postgres, redis, minio, livekit, coturn, prometheus, grafana, loki, caddy
-docker compose -f infra/docker-compose.yml up -d
+# 2. Bring up the full stack (api builds from apps/api/Dockerfile,
+#    data plane + observability containers come up alongside it).
+docker compose \
+  -f infra/docker-compose.yml \
+  -f infra/docker-compose.override.yml \
+  up -d
 
-# 5. Start the API gateway (runs migrations automatically at boot)
-pnpm -F @konvo/api dev          # http://localhost:3000
-
-# 6. In a second terminal, start the PWA
+# 3. Start the PWA dev server (proxies /auth, /rooms, /ws, ... to :3000)
 pnpm -F @konvo/web dev          # http://localhost:5173
 ```
+
+The override file (`infra/docker-compose.override.yml`, gitignored) publishes
+postgres / redis / minio / api on `localhost` so the host's Vite dev server
+can reach them without any extra configuration.
+
+### Option B — API on host (recommended while iterating on api source)
+
+```bash
+git clone https://github.com/<your-org>/KonvoPro.git
+cd KonvoPro
+pnpm install
+
+cp apps/api/.env.example apps/api/.env
+
+# 1. Data plane only (skip the api container; the host runs it)
+docker compose \
+  -f infra/docker-compose.yml \
+  -f infra/docker-compose.override.yml \
+  up -d postgres redis minio livekit coturn prometheus grafana loki
+
+# 2. API on host with hot reload
+pnpm -F @konvo/api dev          # http://localhost:3000
+
+# 3. PWA in a second terminal
+pnpm -F @konvo/web dev          # http://localhost:5173
+```
+
+> ⚠️ Option A and Option B both bind `localhost:3000`. **Don't run them at
+> the same time** — and if `pnpm -F @konvo/api dev` fails to start (e.g.
+> because of a stale `.env`), make sure to kill the orphan `tsx`
+> process before retrying or restarting the docker stack:
+>
+> ```bash
+> lsof -nP -iTCP:3000 -sTCP:LISTEN
+> # kill any stale node/tsx pid in that list, then retry
+> ```
+>
+> Symptoms of an orphan host process holding `:3000` are 500 responses
+> with `{"code":"ECONNREFUSED"}` on every API call — the orphan answers
+> the connection but its own upstream is dead.
 
 Then open <http://localhost:5173>, sign up two accounts in two browser
 profiles, and exchange a message. The first thread will surface a TOFU
@@ -53,6 +94,56 @@ first-contact notice — that is by design (see "What's NOT secure" below).
 > `infra/postgres/init.sql` inside a single transaction — on failure the
 > API refuses requests rather than serving against a half-applied schema
 > (Requirement 17.8).
+
+---
+
+## Deploy to a Single Host (EC2 / Lightsail / bare-metal Linux)
+
+`scripts/deploy.sh` brings the full stack up on a fresh host with a real
+public hostname and Let's Encrypt-issued TLS. It works on Ubuntu 22.04+,
+Debian 12+, Amazon Linux 2023, RHEL/Rocky 9. On a fresh box it installs
+Docker + the Compose plugin + git automatically.
+
+Pre-flight on the host:
+- DNS A/AAAA for your hostname points at this server.
+- Firewall opens **tcp 80** (ACME http-01), **tcp 443** (Caddy HTTPS),
+  **tcp 7880-7881 + udp 7882** (LiveKit), **tcp/udp 3478 + udp 49152-49200**
+  (coturn).
+- Outbound 443 is reachable (ACME).
+
+```bash
+# 1. SSH into the host, clone the repo
+git clone https://github.com/<your-org>/KonvoPro.git /opt/konvo
+cd /opt/konvo
+
+# 2. Deploy. The script generates strong secrets, builds the PWA bundle,
+#    builds the api image, brings the stack up, and waits for HTTPS.
+KONVO_HOST=konvo.example.com \
+TLS_EMAIL=ops@example.com \
+  ./scripts/deploy.sh
+```
+
+When it finishes:
+- PWA: <https://konvo.example.com/>
+- Health: <https://konvo.example.com/health>
+
+Day-2 operations:
+
+```bash
+./scripts/deploy.sh status        # docker compose ps
+./scripts/deploy.sh logs api      # follow a service's logs
+./scripts/deploy.sh update        # git pull + rebuild + restart (zero-touch)
+./scripts/deploy.sh down          # stop the stack (volumes preserved)
+./scripts/deploy.sh down --volumes # ALSO wipe data (DANGEROUS)
+```
+
+The script writes two files on first run:
+- `apps/api/.env` (mode 600) — strong randomly-generated app secrets.
+- `infra/.env.deploy` (mode 600) — `KONVO_HOST`, `TLS_EMAIL`, and infra
+  passwords (postgres, MinIO admin, Grafana admin).
+
+Both are gitignored. Rotate by editing the file, then running
+`./scripts/deploy.sh update`.
 
 ---
 

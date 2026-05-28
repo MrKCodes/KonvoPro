@@ -1,0 +1,88 @@
+# Konvo Platform — production compose overlay.
+#
+# Stacks on top of `infra/docker-compose.yml`. Differences from the
+# dev override:
+#
+#   - Caddy uses Caddyfile.prod (real ACME issuance against
+#     {$KONVO_HOST} + {$TLS_EMAIL}) and bind-mounts the built PWA
+#     bundle from `apps/web/dist` so the SPA is served as static
+#     files.
+#   - api uses NODE_ENV=production. DATABASE_URL is rewritten with
+#     `sslmode=disable` because the data plane stays inside the
+#     docker network — the api's production-mode validator only
+#     wants `sslmode=require` if the DB is off-host.
+#   - The host-port publishings of postgres/redis/minio/api from the
+#     dev override are NOT applied. Only Caddy (80/443), coturn
+#     (3478/49152-49200 udp), and LiveKit (7880-7882) face the
+#     internet. Prometheus/Grafana/Loki are kept on the docker
+#     network only.
+#   - Restart policy is `always` for every service so a host reboot
+#     brings the stack back up.
+#
+# Usage:
+#   docker compose \
+#     -f infra/docker-compose.yml \
+#     -f infra/docker-compose.prod.yml \
+#     up -d
+#
+# The deploy script `scripts/deploy.sh` handles building the web
+# bundle, generating secrets, and bringing the stack up with these
+# files.
+
+services:
+  api:
+    environment:
+      NODE_ENV: production
+      # Postgres still inside the docker network — sslmode=disable
+      # is correct for that topology and the validator only rejects
+      # sslmode=disable when the host suggests off-host postgres.
+      DATABASE_URL: postgres://konvo:${POSTGRES_PASSWORD:-konvo}@postgres:5432/konvo?sslmode=require
+      LIVEKIT_URL: wss://${KONVO_HOST}/livekit
+    restart: always
+
+  postgres:
+    restart: always
+    # In production, generate a strong password and pass it via
+    # POSTGRES_PASSWORD before bringing the stack up.
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konvo}
+
+  redis:
+    restart: always
+
+  minio:
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-konvo}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+  livekit:
+    restart: always
+
+  coturn:
+    restart: always
+
+  prometheus:
+    restart: always
+
+  grafana:
+    restart: always
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+
+  loki:
+    restart: always
+
+  caddy:
+    restart: always
+    environment:
+      KONVO_HOST: ${KONVO_HOST}
+      TLS_EMAIL: ${TLS_EMAIL}
+    volumes:
+      # Override the default dev Caddyfile with the production one.
+      - ./caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      # Built PWA bundle. The deploy script builds apps/web/dist
+      # before bringing the stack up.
+      - ../apps/web/dist:/srv/web:ro

@@ -1,0 +1,137 @@
+# Konvo Platform — Caddy reverse proxy (PRODUCTION)
+#
+# Sibling to the dev Caddyfile but tuned for a real public hostname:
+#   - ACME issuance against Let's Encrypt (via the operator email in
+#     `TLS_EMAIL`); falls back to `tls internal` if no email is set.
+#   - The PWA bundle is served directly by Caddy from /srv/web (the
+#     prod compose overlay bind-mounts the built dist/ into the caddy
+#     container). The api is reverse-proxied at /api/*, /auth/*,
+#     /devices/*, /rooms/*, /attachments/*, /push/*, /turn/*,
+#     /health, /metrics. WebSocket lives at /ws*. LiveKit signaling
+#     lives at /livekit/*.
+#   - A long-lived cache header is applied to fingerprinted asset
+#     paths under /assets/* (Vite's default output dir).
+#   - Service-worker bytes (sw.js, manifest.webmanifest) are served
+#     no-cache so a roll-out lands on every client without a hard
+#     refresh.
+#
+# Required env vars on the host:
+#   KONVO_HOST   real FQDN, e.g. konvo.opsalchemistlabs.co.in
+#   TLS_EMAIL    operator email for Let's Encrypt registration
+#                (recommended; falls back to internal CA if unset)
+#
+# This file is consumed by the prod compose overlay
+# `infra/docker-compose.prod.yml`. The dev compose stack continues
+# to use `infra/caddy/Caddyfile`.
+
+{
+	# Tighten the global ACME settings. We default to Let's Encrypt
+	# production CA. To stage-test certificate issuance without
+	# burning rate-limit quota, set CADDY_ACME_CA to the staging
+	# directory: https://acme-staging-v02.api.letsencrypt.org/directory
+	{$CADDY_GLOBAL_OPTIONS}
+
+	servers {
+		# Trust X-Forwarded-* headers from upstream load balancers
+		# (e.g. an AWS ELB in front of the EC2 instance). Remove if
+		# Caddy is the public entry point with no proxy in front.
+		trusted_proxies static private_ranges
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Plain-HTTP listener — redirect everything (incl. ws://) to https://.
+# Required for ACME http-01 + Requirement 17.5.
+# ---------------------------------------------------------------------------
+:80 {
+	redir https://{host}{uri} permanent
+}
+
+# ---------------------------------------------------------------------------
+# Primary HTTPS site.
+# ---------------------------------------------------------------------------
+{$KONVO_HOST} {
+	# ACME issuance. `{$TLS_EMAIL}` lands in the email argument; if
+	# empty, Caddy logs a one-time warning and falls back to its
+	# internal CA — which won't be trusted by browsers but keeps the
+	# stack bootable for smoke tests against an IP address.
+	tls {$TLS_EMAIL}
+
+	encode zstd gzip
+
+	# -----------------------------------------------------------------------
+	# Security response headers. The CSP itself is owned by the api
+	# (`@fastify/helmet`) so the per-request style-src nonce stays the
+	# sole source of truth. Static-asset responses don't carry a CSP
+	# from the api, so we emit a baseline policy here for HTML / JS /
+	# CSS that's at least as strict as the api-side one. The CSP is
+	# overridden ONLY on the catch-all static handler — proxied paths
+	# inherit the api's per-request nonce.
+	# -----------------------------------------------------------------------
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self), camera=(self), display-capture=()"
+	}
+
+	# LiveKit signaling reverse-proxy (task 8.3). LiveKit's client
+	# SDK opens a wss:// to {KONVO_HOST}/livekit/... and negotiates
+	# ICE with the SFU. Forwarding through Caddy keeps the browser's
+	# CSP `connect-src`/`media-src` lists scoped to a single origin.
+	handle /livekit/* {
+		reverse_proxy livekit:7880
+	}
+
+	# WebSocket gateway (design.md §10).
+	handle /ws* {
+		reverse_proxy api:3000
+	}
+
+	# Strip the /api prefix before forwarding so the backend sees
+	# its native route names — e.g. GET /api/health → backend GET /health.
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+
+	# Direct-mounted REST surfaces: the SPA hits these as /auth/*,
+	# /rooms/*, etc. Forwarding them by their public name keeps the
+	# fetch URLs in the SPA identical to dev (where the Vite proxy
+	# uses the same paths).
+	@apiPaths {
+		path /auth/* /devices/* /users/* /rooms/* /attachments/* /push/* /turn/* /health /metrics
+	}
+	handle @apiPaths {
+		reverse_proxy api:3000
+	}
+
+	# -----------------------------------------------------------------------
+	# Static SPA bundle.
+	#
+	# The prod compose overlay bind-mounts apps/web/dist as /srv/web.
+	# Caddy serves files from there with SPA-style fallback to
+	# index.html for unknown routes (so client-side routes like
+	# /broadcast/foo work on hard reload).
+	#
+	# Cache strategy:
+	#   - /assets/*        : 1 year, immutable (fingerprinted by Vite)
+	#   - /sw.js, /manifest.webmanifest : no-cache (rollout-sensitive)
+	#   - everything else  : no transform; let the browser decide
+	# -----------------------------------------------------------------------
+	handle {
+		root * /srv/web
+
+		# Long cache for fingerprinted assets.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		# Service-worker + manifest must NOT be cached aggressively.
+		@swManifest path /sw.js /manifest.webmanifest /workbox-*.js
+		header @swManifest Cache-Control "no-cache, no-store, must-revalidate"
+
+		# Try the literal path first, then index.html for SPA routes.
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -19,10 +19,10 @@ import {
   type KeyboardEvent,
 } from 'react';
 
-import type { DmController } from './controller.js';
+import type { DmControllerLike } from './controller-shape.js';
 
 export interface ComposerProps {
-  readonly controller: DmController;
+  readonly controller: DmControllerLike;
   /** `peerUserId` of the active thread. The composer is hidden
    *  by the parent when no thread is selected, so this is
    *  required. */
@@ -63,7 +63,7 @@ export function Composer(props: ComposerProps): JSX.Element {
     }
     setSendState({ kind: 'sending' });
     try {
-      const sendArgs: Parameters<DmController['sendMessage']>[0] = {
+      const sendArgs: Parameters<DmControllerLike['sendMessage']>[0] = {
         peerUserId: props.peerUserId,
         body: new TextEncoder().encode(trimmed),
         ...(props.peerHandle !== undefined
