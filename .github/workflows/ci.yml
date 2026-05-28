@@ -131,6 +131,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        # apps/api and apps/web import from workspace packages whose
+        # `package.json` `main`/`types` point at `dist/`. Those dirs
+        # are gitignored, so a fresh CI checkout has no compiled
+        # output to resolve against. Building them first makes the
+        # api/web typecheck see real types instead of TS2307.
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
+
       - name: Forbid `any` in production source (Requirement 19.11)
         # Defence-in-depth grep on top of the eslint rule
         # `@typescript-eslint/no-explicit-any` (root eslint.config.js).
@@ -213,6 +223,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
 
       - name: eslint --max-warnings=0 (Requirement 19.6)
         # `pnpm -r run lint` invokes each workspace's `lint` script
@@ -326,6 +341,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
+
       - name: vitest run (single-run)
         run: pnpm -r run test:unit
 
@@ -359,6 +379,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
+
       - name: fast-check property suites (≥100 iterations)
         run: pnpm -r run test:property
 
@@ -388,11 +413,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
+
       - name: Build api image
-        # The compose file at `infra/docker-compose.yml` currently
-        # uses a placeholder `node:20-alpine` image for the api
-        # service (per its TODO). Once `apps/api/Dockerfile` lands
-        # we'll switch to `docker compose build api` here.
+        # apps/api/Dockerfile is the real production image; we
+        # build the workspace api compile output ahead of bringing
+        # the compose stack up.
         run: pnpm -F @konvo/api build
 
       - name: Bring up docker-compose data-plane
@@ -467,6 +496,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
 
       - name: Build api image
         run: pnpm -F @konvo/api build
@@ -600,6 +634,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (@konvo/protocol, @konvo/crypto)
+        run: |
+          pnpm -F @konvo/protocol build
+          pnpm -F @konvo/crypto build
 
       - name: fast-check property suites (≥500 iterations, tamper / FS)
         # Mirrors the daytime gate-6 invocation; `FAST_CHECK_RUNS=500`
